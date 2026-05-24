@@ -1,4 +1,4 @@
-{
+﻿{
 //"wallpaper":"https://picsum.photos/1280/720/?blur=10",
 //wallpaper":"http://www.kf666888.cn/api/tvbox/img",
  "wallpaper": "http://alist.hopto.org:5705/pics",
