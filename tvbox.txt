@@ -126,6 +126,10 @@
             "name": "4GTV",
             "url": "./4gtv1.txt",
              "epg": "http://epg.112114.xyz/?ch={name}&date={date}",
+{
+            "name": "4GTV1080",
+            "url": "./4gtv1080.txt",
+             "epg": "http://epg.112114.xyz/?ch={name}&date={date}",
       "logo": "https://epg.112114.xyz/logo/{name}.png"
     },
 {
