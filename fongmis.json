@@ -189,64 +189,7 @@
       "filterable": 1,
       "jar": "http://alist.hopto.org/cat/xiaosa-0415.jar"
     },
-    {
-      "key": "星芽短剧",
-      "name": "📺｜星芽短劇",
-      "type": 3,
-      "api": "https://git.yylx.win/raw.githubusercontent.com/PizazzGY/NewTVBox/main/movie/py/XYDJ.py",
-      "searchable": 1,
-      "changeable": 1,
-      "quickSearch": 1,
-      "filterable": 1
-    },
-    {
-      "key": "剧王短剧",
-      "name": "📺｜劇王短劇",
-      "type": 3,
-      "api": "https://git.yylx.win/raw.githubusercontent.com/PizazzGY/NewTVBox/main/movie/py/JWDJ.py",
-      "searchable": 1,
-      "changeable": 1,
-      "quickSearch": 1,
-      "filterable": 1
-    },
-{
-            "key": "PTT",
-            "name": "ptt",
-            "type": 3,
-            "api": "csp_PTT",
-            "searchable": 1,
-            "changeable": 1
-        },
-    {
-      "key": "看球",
-      "name": "88看球",
-      "type": 3,
-      "api": "csp_Kanqiu",
-      "searchable": 1,
-      "changeable": 0,
-      "style": {
-        "type": "list"
-      }
-    },
-    {
-      "key": "暴風",
-      "name": "暴風",
-      "type": 1,
-      "api": "https://bfzyapi.com/api.php/provide/vod/?ac=list",
-      "searchable": 1,
-      "changeable": 1
-    },
-{"key":"py_独播库","name":"🅿️独播库｜py","type":3,"api":"http://alist.hopto.org/cat/Plugin/独播库.py","searchable":1,"quickSearch":1,"changeable":1,"filterable":1,"timeout":120},
-{"key":"py_路漫漫","name":"🅿️路漫漫｜py","type":3,"api":"http://alist.hopto.org/cat/Plugin/路漫漫.py","searchable":1,"quickSearch":1,"changeable":1,"filterable":1,"timeout":120},
-    {
-      "key": "異界",
-      "name": "異界",
-      "type": 3,
-      "api": "csp_Ysj",
-      "searchable": 1,
-      "filterable": 1,
-      "changeable": 1
-    },
+
   {
    "key": "Jable",
    "name": "🔞JableAV",
@@ -360,5 +303,5 @@
   "cdnjs.hnfenxun.com",
   "cms.qdwght.com"
  ],
-  "spider": "./fm.jar",
+"spider": "./fm.jar",
 }
