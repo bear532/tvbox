@@ -8,7 +8,7 @@
 //"spider": "./1211.jar",
 //"spider": "./cat0311.jar",
 "spider": "./fm.jar",
-"notice":"📢你好！\n 後臺已更新\n",
+"notice":"📢你好！\n 母親節快樂\n",
 //"spider": "./catxb.jar",
 //"spider": "./cat0109.jar",
 //"spider":"https://github.com/Bear9501/news/blob/main/cat0828.jar?raw=true",
