@@ -361,5 +361,5 @@
   "cdnjs.hnfenxun.com",
   "cms.qdwght.com"
  ],
-  "spider": "http://alist.hopto.org/cat/catvod.jar"
+  "spider": "./fm.jar"
 }
