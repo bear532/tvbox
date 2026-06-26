@@ -105,11 +105,16 @@
 //"lives":[{"group":"redirect","channels":[{"name":"live","urls":["proxy://do=live&type=txt&ext=aHR0cDovL2JlYXIuOTQyMTg4Lnh5ei90dmJveC9zNTIzbGl2ZS50eHQ="]}]}],
 "lives":
     [
-
-{
-      "name": "4GTV",
-      "url": "https://ghfast.top/https://raw.githubusercontent.com/FGBLH/FG/refs/heads/main/4gtv",
-      "epg": "http://epg.112114.xyz/?ch={name}&date={date}",
+	{
+            "name": "4GTV1",
+            "url": "./4gtv1.txt",
+             "epg": "http://epg.112114.xyz/?ch={name}&date={date}",
+      "logo": "https://epg.112114.xyz/logo/{name}.png"
+    },
+	{
+            "name": "4GTV2",
+            "url": "./4gtv1080.txt",
+             "epg": "http://epg.112114.xyz/?ch={name}&date={date}",
       "logo": "https://epg.112114.xyz/logo/{name}.png"
     },
 {
