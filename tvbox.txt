@@ -8,7 +8,7 @@
 //"spider": "./1211.jar",
 //"spider": "./cat0311.jar",
 "spider": "./fm.jar",
-"notice":"📢你好！\n 母親節快樂\n",
+"notice":"📢你好！\n 加菲喵\n",
 //"spider": "./catxb.jar",
 //"spider": "./cat0109.jar",
 //"spider":"https://github.com/Bear9501/news/blob/main/cat0828.jar?raw=true",
@@ -123,8 +123,14 @@
             "ua": "judy/5.2.1"
   },
 	{
-            "name": "4GTV",
+            "name": "4GTV1",
             "url": "./4gtv1.txt",
+             "epg": "http://epg.112114.xyz/?ch={name}&date={date}",
+      "logo": "https://epg.112114.xyz/logo/{name}.png"
+    },
+	{
+            "name": "4GTV2",
+            "url": "./4gtv1080.txt",
              "epg": "http://epg.112114.xyz/?ch={name}&date={date}",
       "logo": "https://epg.112114.xyz/logo/{name}.png"
     },
