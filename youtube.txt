@@ -1,4 +1,5 @@
 油管链接,#genre#
+parse=1
 三立iNEWS,https://www.youtube.com/watch?v=pF507BLtbqU
 寰宇新聞台,https://www.youtube.com/watch?v=Ej3LQM_lTEw
 東森財經新聞,https://www.youtube.com/watch?v=1I2iq41Akmo
