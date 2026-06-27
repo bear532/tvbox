@@ -134,8 +134,14 @@
              "epg": "http://epg.112114.xyz/?ch={name}&date={date}",
       "logo": "https://epg.112114.xyz/logo/{name}.png"
     },
+	{
+            "name": "youtube1",
+            "url": "./youtube.txt",
+             "epg": "http://epg.112114.xyz/?ch={name}&date={date}",
+      "logo": "https://epg.112114.xyz/logo/{name}.png"
+    },
 {
-      "name": "youtube",
+      "name": "youtube2",
       "url": "https://raw.githubusercontent.com/zzq1234567890/epg/refs/heads/main/youtube.m3u",
       "epg": "http://epg.112114.xyz/?ch={name}&date={date}",
       "logo": "https://epg.112114.xyz/logo/{name}.png"
