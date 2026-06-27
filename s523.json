@@ -126,7 +126,7 @@
           {
             "name": "iptv01",
             "type": 0,
-            "url": "https://goiptv.passwdword.xyz/get.php?username=tg_5ujizmpi&password=l7kunz2dvgid&type=m3u_plus",
+            "url": "https://iptv.8plus.eu.org/get.php?username=tg_tkjxfbxn&password=njfe6hutv1st&type=m3u_plus",
             "epg": "http://epg.51zmt.top:8000/api/diyp/?ch={name}&date={date}",
             "playerType": 2,
             "ua": "judy/5.2.1"
@@ -134,7 +134,7 @@
             {
             "name": "iptv02",
             "type": 0,
-            "url": "https://goiptv.passwdword.xyz/get.php?username=tg_5ujizmpi&password=l7kunz2dvgid&type=m3u_plus",
+            "url": "https://iptv.8plus.eu.org/get.php?username=tg_1m55ipap&password=dr3d6sw0sjlv&type=m3u_plus",
             "epg": "http://epg.51zmt.top:8000/api/diyp/?ch={name}&date={date}",
             "playerType": 2,
             "ua": "judy/5.2.1"
