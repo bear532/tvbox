@@ -1,5 +1,29 @@
 {
   "sites": [
+{
+            "key": "MissAV",
+            "name": "🔞MissAV(翻)",
+            "type": 3,
+            "api": "csp_Miss",
+            "searchable": 1,
+            "ext": "https://missav.ai",
+            "jar": "https://files.catbox.moe/wbozi7.txt"
+     
+        },
+
+
+{
+            "key": "MissAV2",
+            "name": "🔞MissAV(翻)",
+            "type": 3,
+            "api": "csp_Miss",
+            "searchable": 1,
+            "ext": "https://missav.ai$$$proxy",
+            "jar": "https://files.catbox.moe/wbozi7.txt"
+            
+        
+        },
+    
     {
       "key": "🔞滴滴_CMS",
       "name": "🔞滴滴┃CMS",
