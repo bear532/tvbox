@@ -359,6 +359,17 @@
    "ext": "./cat/olevod11.json",
    "jar":"./catxb.jar"
   },
+{
+            "name": "欧乐影院",
+            "key": "Olyy",
+            "type": 3,
+            "api": "csp_OlyyAmns",
+            "searchable": 1,
+            "filterable": 1,
+            "quickSearch": 1,
+            "changeable": 1,
+            "jar": "http://alist.hopto.org/cat/194.png"
+        },
         {
       "key": "drpyS_荐片",
       "name": "荐片(DS)",
