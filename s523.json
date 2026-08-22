@@ -255,7 +255,17 @@
    "ext": "./cat/olevod11.json",
    "jar":"./catxb.jar"
   },
-  
+{
+            "name": "欧乐影院",
+            "key": "Olyy",
+            "type": 3,
+            "api": "csp_OlyyAmns",
+            "searchable": 1,
+            "filterable": 1,
+            "quickSearch": 1,
+            "changeable": 1,
+            "jar": "http://alist.hopto.org/cat/194.png"
+        },  
 { "key":"天空资源","name":"天空资源","type":1,"api":"https://api.tiankongapi.com/api.php/provide/vod","searchable":1,"changeable":1,"playUrl":"https://jx.huishij.com/yun/?url=","categories":["国产剧","港剧","韩剧","日剧","泰剧","台剧","欧美剧","新马剧","其他剧","日本动漫","韩国动漫","国产动漫","港台动漫","欧美动漫","新马泰动漫","其它动漫","电影","国产综艺","港台综艺","韩国综艺","日本综艺","欧美综艺","新马泰综艺","其他综艺","短剧"]},
 { "key": "索尼", "name": "索尼 ", "type": 1, "api": "https://suoniapi.com/api.php/provide/vod", "searchable": 1, "changeable": 1 }, 
 { "key": "華為吧", "name": "華為吧", "type": 1, "api": "https://huawei8.live/api.php/provide/vod", "searchable": 1, "changeable": 1, "playUrl": "https://player.hw8.lol/player?url=", "categories": [ "剧情片", "动作片", "冒险片", "同性片", "喜剧片", "奇幻片", "恐怖片", "悬疑片", "惊悚片", "灾难片", "爱情片", "犯罪片", "科幻片", "动画电影", "歌舞片", "战争片", "经典片", "网络电影", "其它片", "国产剧", "港剧", "韩剧", "日剧", "泰剧", "台剧", "欧美剧", "新马剧", "其他剧", "国产综艺", "港台综艺", "韩国综艺", "日本综艺", "欧美综艺", "新马泰综艺", "其他综艺", "短剧", "日本动漫", "韩国动漫", "国产动漫", "港台动漫", "欧美动漫", "新马泰动漫", "其它动漫" ] },
