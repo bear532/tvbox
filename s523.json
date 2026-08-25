@@ -106,11 +106,11 @@
 "lives":
     [
 {
-            "name": "4GTV0",
-            "url": "http://tv.942188.xyz/520",
-             "epg": "http://epg.112114.xyz/?ch={name}&date={date}",
+      "name": "四季影視",
+      "epg": "https://epg.yang-1989.eu.org/epg.xml.gz",
+      "url": "http://tv.942188.xyz/520",
       "logo": "https://epg.112114.xyz/logo/{name}.png"
-    },
+     },
 		{
             "name": "4GTV1",
             "url": "./4gtv1.txt",
