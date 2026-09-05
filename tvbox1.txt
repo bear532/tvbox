@@ -340,7 +340,51 @@
 {"key": "nu", "name": "❤️‍🔥Nuu|XBPQ", "type": 3, "api": "csp_XBPQ", "jar": "./jar/XBPQ.jar", "ext": "https://github.com/shawn82/tvbox/raw/master/lib/nuu.json" },
 {"key":"dr_try","name":"🧸唐人街影院","type":3,"api":"https://raw.githubusercontent.com/hjdhnx/dr_py/main/libs/drpy2.min.js","searchable":2,"quickSearch":0,"filterable":1,"ext":"http://alist.hopto.org/cat/BMW/iry.js"},
 
-//{"key": "雄影視","name": "🐻雄影視┃多元","type": 3,"api": "csp_AppYsV2","searchable": 1,"quickSearch": 1,"filterable": 1,"playerType": 2,"ext": "http://cms.tvvboxes.uk/api.php/app/"},    
+//{"key": "雄影視","name": "🐻雄影視┃多元","type": 3,"api": "csp_AppYsV2","searchable": 1,"quickSearch": 1,"filterable": 1,"playerType": 2,"ext": "http://cms.tvvboxes.uk/api.php/app/"}, {
+   "key": "豆花影视[PY]",
+   "name": "🌸豆花影视[PY]",
+   "type": 3,
+   "api": "./py/豆花影视.py",
+   "searchable": 1,
+   "quickSearch": 1,
+   "filterable": 0
+  },
+{
+      "key": "紅果短劇.py",
+      "name": "紅果短劇.py",
+      "type": 3,
+      "api": "./py/紅果短劇.py"
+    },
+{
+      "key": "太乙影视.py",
+      "name": "太乙影视.py",
+      "type": 3,
+      "api": "./py/太乙影视.py"
+    },
+{
+      "key": "太二影视.py",
+      "name": "太二影视.py",
+      "type": 3,
+      "api": "./py/太二影视.py"
+    },
+{
+      "key": "多瑙影院.py",
+      "name": "多瑙影院.py",
+      "type": 3,
+      "api": "./py/多瑙影院.py"
+    },
+{
+      "key": "枝枝影视.py",
+      "name": "枝枝影视.py",
+      "type": 3,
+      "api": "./py/枝枝影视.py"
+    },
+{
+      "key": "柯南影视.py",
+      "name": "柯南影视.py",
+      "type": 3,
+      "api": "./py/柯南影视.py"
+    },   
   {
    "key": "歐樂",
    "name": "⚽歐樂影院(SP)",
