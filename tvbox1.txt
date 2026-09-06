@@ -285,6 +285,52 @@
 "rating": [{"name": "rating","request": {"method": "GET","url": {"raw": "https://api.wmdb.tv/api/v1/movie/search?q={name}&limit=1"}},"response": {"result": "this","data": [{"key": "rating","value": "doubanRating"}]}}],
 
 "sites":[
+{
+   "key": "豆花影视[PY]",
+   "name": "🌸豆花影视[PY]",
+   "type": 3,
+   "api": "./py/豆花影视.py",
+   "searchable": 1,
+   "quickSearch": 1,
+   "filterable": 0
+  },
+{
+      "key": "紅果短劇.py",
+      "name": "紅果短劇.py",
+      "type": 3,
+      "api": "./py/紅果短劇.py"
+    },
+{
+      "key": "太乙影视.py",
+      "name": "太乙影视.py",
+      "type": 3,
+      "api": "./py/太乙影视.py"
+    },
+{
+      "key": "太二影视.py",
+      "name": "太二影视.py",
+      "type": 3,
+      "api": "./py/太二影视.py"
+    },
+{
+      "key": "多瑙影院.py",
+      "name": "多瑙影院.py",
+      "type": 3,
+      "api": "./py/多瑙影院.py"
+    },
+{
+      "key": "枝枝影视.py",
+      "name": "枝枝影视.py",
+      "type": 3,
+      "api": "./py/枝枝影视.py"
+    },
+{
+      "key": "柯南影视.py",
+      "name": "柯南影视.py",
+      "type": 3,
+      "api": "./py/柯南影视.py"
+    },
+
 //{"key":"独播库","name":"🔥┃独播库","type":4,"api":"https://tvbot.ggff.net/duboku"},
 		{"key":"XBPQ_黑狐影院","name":"黑狐影院|XBPQ","type":3,"api":"csp_XBPQ", "jar":"./jar/XBPQ.jar",
 			"ext": {
