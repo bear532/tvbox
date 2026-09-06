@@ -285,6 +285,16 @@
 "rating": [{"name": "rating","request": {"method": "GET","url": {"raw": "https://api.wmdb.tv/api/v1/movie/search?q={name}&limit=1"}},"response": {"result": "this","data": [{"key": "rating","value": "doubanRating"}]}}],
 
 "sites":[
+{
+   "key": "豆花影視[PY]",
+   "name": "🌸豆花影視[PY]",
+   "type": 3,
+   "api": "./py/豆花影視.py",
+   "searchable": 1,
+   "quickSearch": 1,
+   "filterable": 0
+  },
+
 //{"key":"独播库","name":"🔥┃独播库","type":4,"api":"https://tvbot.ggff.net/duboku"},
 		{"key":"XBPQ_黑狐影院","name":"黑狐影院|XBPQ","type":3,"api":"csp_XBPQ", "jar":"./jar/XBPQ.jar",
 			"ext": {
