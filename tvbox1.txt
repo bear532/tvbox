@@ -286,49 +286,49 @@
 
 "sites":[
 {
-   "key": "豆花影视[PY]",
-   "name": "🌸豆花影视[PY]",
+   "key": "豆花影視[PY]",
+   "name": "🌸豆花影視[PY]",
    "type": 3,
-   "api": "./py/豆花影视.py",
+   "api": "./py/豆花影視.py",
    "searchable": 1,
    "quickSearch": 1,
    "filterable": 0
   },
 {
-      "key": "紅果短劇.py",
-      "name": "紅果短劇.py",
+      "key": "紅豆短劇[PY]",
+      "name": "紅豆短劇[PY]",
       "type": 3,
-      "api": "./py/紅果短劇.py"
+      "api": "./py/紅豆短劇.py"
     },
 {
-      "key": "太乙影视.py",
-      "name": "太乙影视.py",
+      "key": "太乙影視[PY]",
+      "name": "太乙影視[PY]",
       "type": 3,
-      "api": "./py/太乙影视.py"
+      "api": "./py/太乙影視.py"
     },
 {
-      "key": "太二影视.py",
-      "name": "太二影视.py",
+      "key": "太二影視[PY]",
+      "name": "太二影視[PY]",
       "type": 3,
-      "api": "./py/太二影视.py"
+      "api": "./py/太二影視.py"
     },
 {
-      "key": "多瑙影院.py",
-      "name": "多瑙影院.py",
+      "key": "多腦影視[PY]",
+      "name": "多腦影視[PY]",
       "type": 3,
-      "api": "./py/多瑙影院.py"
+      "api": "./py/多腦影視.py"
     },
 {
-      "key": "枝枝影视.py",
-      "name": "枝枝影视.py",
+      "key": "枝枝影視[PY]",
+      "name": "枝枝影視[PY]",
       "type": 3,
-      "api": "./py/枝枝影视.py"
+      "api": "./py/枝枝影視.py"
     },
 {
-      "key": "柯南影视.py",
-      "name": "柯南影视.py",
+      "key": "柯南影視[PY]",
+      "name": "柯南影視[PY]",
       "type": 3,
-      "api": "./py/柯南影视.py"
+      "api": "./py/柯南影視.py"
     },
 
 //{"key":"独播库","name":"🔥┃独播库","type":4,"api":"https://tvbot.ggff.net/duboku"},
