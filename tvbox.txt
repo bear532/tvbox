@@ -250,31 +250,6 @@
   ],
 
 
-"drives": [
-{"name":"小雅的Alist","server":"http://alist.xiaoya.pro","type":"alist"},
-{"name":"🌊總集","server":"http://43.139.29.179:5244/","type":"alist"},
-{"name":"🏝梓澪の妙妙屋(H)", "server":"https://xn--i0v44m.xyz","type":"alist"},
-{"name":"菊花蜜","server":"https://pan.142856.xyz/","type":"alist"},
-{"name":"🦀9T(Adult)","server":"https://drive.9t.ee","type":"alist"},
-{"name":"☃姬路白雪","server":"https://pan.jlbx.xyz","type":"alist"},
-{"name":"盒子之家","server":"http://alist.hopto.org:5244/","type":"alist"},
-//{"name":"🔮嗨翻","server":"https://pan.hikerfans.com","type":"alist","password":"5"},
-{"name":"🌤","server":"https://alist.52qy.repl.co","type":"alist"},
-{"name":"🐭米奇妙妙屋","server":"https://anime.mqmmw.ga","type":"alist"},
-{"name":"💂小兵组网盘影视","server":"https://6vv.app","type":"alist"},
-{"name":"🐋一只鱼","server":"https://alist.youte.ml","type":"alist"},
-{"name":"🌊七米蓝","server":"https://al.chirmyram.com","type":"alist"},
-{"name":"🥼帅盘","server":"https://hi.shuaipeng.wang","type":"alist"},
-{"name":"💾DISK","server":"http://124.222.140.243:8080","type":"alist"},
-{"name":"🌨云播放","server":"https://quanzi.laoxianghuijia.cn","type":"alist"},
-{"name":"✨星梦","server":"https://pan.bashroot.top","type":"alist"},
-{"name":"🌊小江","server":"https://dyj.me","type":"alist"},
-{"name":"💫触光","server":"https://pan.ichuguang.com","type":"alist"},
-{"name":"🕵好汉吧","server":"https://8023.haohanba.cn","type":"alist"},
-{"name":"🎡资源小站","server":"https://960303.xyz/","type":"alist"},
-{"name":"🎢轻弹浅唱","server":"https://g.xiang.lol","type":"alist"}
-],
-
 "recommend": [{"name": "豆瓣推荐","request": {"method": "GET","header": [{"key": "Referer","value": "https://movie.douban.com/"}],
 "url": {"raw": "https://movie.douban.com/j/new_search_subjects?sort=U&range=0,10&tags=&playable=1&start=0&year_range=2022,2022"}},
 "response": {"result": "$.data","data": [
@@ -294,7 +269,15 @@
    "quickSearch": 1,
    "filterable": 0
   },
-
+{
+      "key": "py_紅果短劇",
+   "name": "紅果短劇[PY]",
+   "api": "./py/紅果.py",
+   "filterable": 1,
+   "quickSearch": 1,
+   "searchable": 1,
+   "type": 3
+  },
 //{"key":"独播库","name":"🔥┃独播库","type":4,"api":"https://tvbot.ggff.net/duboku"},
 		{"key":"XBPQ_黑狐影院","name":"黑狐影院|XBPQ","type":3,"api":"csp_XBPQ", "jar":"./jar/XBPQ.jar",
 			"ext": {
@@ -399,7 +382,7 @@
             "key": "py_非凡资源无广",
             "name": "🍎非凡资源无广(T3)",
             "type": 3,
-            "api": "http://alist.hopto.org/cat/Plugin/采集去广模板.py",
+            "api": "./py/采集去广模板.py",
             "searchable": 1,
             "quickSearch": 0,
             "filterable": 0,

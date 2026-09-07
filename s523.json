@@ -1,7 +1,7 @@
 
 {
 "wallpaper":"http://www.kf666888.cn/api/tvbox/img",
-"notice":"📢你好！\n 2026 免費使用 \n",
+"notice":"📢你好！\n 增加紅果短劇 \n",
 "spider": "./fm.jar",
 
       "doh": [
@@ -106,7 +106,7 @@
 "lives":
     [
 {
-      "name": "四季春",
+      "name": "四季",
       "epg": "https://epg.yang-1989.eu.org/epg.xml.gz",
       "url": "https://iptv543.com/bbb.php",
       "logo": "https://epg.112114.xyz/logo/{name}.png"
@@ -184,7 +184,44 @@
 
 "sites":[
 //{"key": "公告","name": "公告","type": 3,"api": "csp_Notice","searchable": 0,"changeable": 0,"ext": "./notice.json","jar":"./notice.jar"},
-
+{
+   "key": "豆花影視[PY]",
+   "name": "🌸豆花影視[PY]",
+   "type": 3,
+   "api": "./py/豆花影視.py",
+   "searchable": 1,
+   "quickSearch": 1,
+   "filterable": 0
+  },
+{
+      "key": "py_紅果短劇",
+   "name": "紅果短劇[PY]",
+   "api": "./py/紅果.py",
+   "filterable": 1,
+   "quickSearch": 1,
+   "searchable": 1,
+   "type": 3
+  },
+  
+  
+        {
+            "key": "py_非凡资源无广",
+            "name": "🍎非凡资源无广(T3)",
+            "type": 3,
+            "api": "http://alist.hopto.org/cat/Plugin/采集去广模板.py",
+            "searchable": 1,
+            "quickSearch": 0,
+            "filterable": 0,
+            "changeable": 0,
+            "ext": {
+                "url": "http://ffzy.tv/api.php/provide/vod/from/ffm3u8/at/json/",
+                "a": [
+                    1,
+                    2,
+                    3
+                ]
+            }
+        }, 
 
 		{"key":"XBPQ_黑狐影院","name":"黑狐影院|XBPQ","type":3,"api":"csp_XBPQ", "jar":"./jar/XBPQ.jar",
 			"ext": {
