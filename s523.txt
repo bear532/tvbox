@@ -193,16 +193,7 @@
    "quickSearch": 1,
    "filterable": 0
   },
-//{
-      "key": "py_紅果短劇",
-   "name": "紅果短劇[PY]",
-   "api": "./py/紅果.py",
-   "filterable": 1,
-   "quickSearch": 1,
-   "searchable": 1,
-   "type": 3
-  },
-  
+
   
         {
             "key": "py_非凡资源无广",
