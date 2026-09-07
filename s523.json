@@ -1,7 +1,7 @@
 
 {
 "wallpaper":"http://www.kf666888.cn/api/tvbox/img",
-"notice":"📢你好！\n 增加紅果短劇 \n",
+"notice":"📢你好！\n 2026 免費使用 \n",
 "spider": "./fm.jar",
 
       "doh": [
@@ -193,7 +193,7 @@
    "quickSearch": 1,
    "filterable": 0
   },
-{
+//{
       "key": "py_紅果短劇",
    "name": "紅果短劇[PY]",
    "api": "./py/紅果.py",
