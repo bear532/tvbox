@@ -261,6 +261,24 @@
 
 "sites":[
 {
+   "key": "豆花影視[PY]",
+   "name": "🌸豆花影視[PY]",
+   "type": 3,
+   "api": "./py/豆花影視.py",
+   "searchable": 1,
+   "quickSearch": 1,
+   "filterable": 0
+  },
+{
+      "key": "py_紅果短劇",
+   "name": "紅果短劇[PY]",
+   "api": "./py/紅果.py",
+   "filterable": 1,
+   "quickSearch": 1,
+   "searchable": 1,
+   "type": 3
+  },  
+{
             "key": "YouTube-DASH",
             "name": "🥇｜YouTube｜",
             "type": 3,
@@ -283,16 +301,6 @@
             "filterable": 1,
             "timeout": 120
         },
-{
-   "key": "豆花影視[PY]",
-   "name": "🌸豆花影視[PY]",
-   "type": 3,
-   "api": "./py/豆花影視.py",
-   "searchable": 1,
-   "quickSearch": 1,
-   "filterable": 0
-  },
-//{"key":"独播库","name":"🔥┃独播库","type":4,"api":"https://tvbot.ggff.net/duboku"},
 		{"key":"XBPQ_黑狐影院","name":"黑狐影院|XBPQ","type":3,"api":"csp_XBPQ", "jar":"./jar/XBPQ.jar",
 			"ext": {
 				"站名": "黑狐影院",
