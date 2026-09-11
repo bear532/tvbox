@@ -261,6 +261,29 @@
 
 "sites":[
 {
+            "key": "YouTube-DASH",
+            "name": "🥇｜YouTube｜",
+            "type": 3,
+            "api": "http://alist.hopto.org/cat/py/油管-13.py",
+            "searchable": 1,
+            "quickSearch": 1,
+            "filterable": 1,
+            "style": {
+                "ratio": 1.7
+            }
+        },
+        {
+            "key": "py_独播库",
+            "name": "🥇｜獨播庫｜",
+            "type": 3,
+            "api": "http://alist.hopto.org/cat/py/独播库.py",
+            "searchable": 1,
+            "quickSearch": 1,
+            "changeable": 1,
+            "filterable": 1,
+            "timeout": 120
+        },
+{
    "key": "豆花影視[PY]",
    "name": "🌸豆花影視[PY]",
    "type": 3,
