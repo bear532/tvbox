@@ -279,15 +279,6 @@
    "type": 3
   },  
 {
-      "key": "py_電影獵手",
-   "name": "電影獵手[PY]",
-   "api": "./py/電影獵手.py",
-   "filterable": 1,
-   "quickSearch": 1,
-   "searchable": 1,
-   "type": 3
-  },
-{
             "key": "YouTube-DASH",
             "name": "🥇｜YouTube｜",
             "type": 3,
