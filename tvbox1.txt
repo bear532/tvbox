@@ -261,6 +261,15 @@
 
 "sites":[
 {
+      "key": "py_歐樂影院",
+   "name": "歐樂影院[PY]",
+   "api": "./py/歐樂影院.py",
+   "filterable": 1,
+   "quickSearch": 1,
+   "searchable": 1,
+   "type": 3
+  },
+{
    "key": "豆花影視[PY]",
    "name": "🌸豆花影視[PY]",
    "type": 3,
