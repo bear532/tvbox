@@ -1,7 +1,7 @@
 
 {
 "wallpaper":"http://www.kf666888.cn/api/tvbox/img",
-"notice":"📢你好！\n 2026 免費使用 \n",
+"notice":"📢你好！\n 2026 點播源更新 \n",
 "spider": "./fm.jar",
 
       "doh": [
