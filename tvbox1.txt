@@ -261,6 +261,33 @@
 
 "sites":[
 {
+      "key": "py_Libvio影視",
+   "name": "Libvio影視[PY]",
+   "api": "./py/Libvio影視.py",
+   "filterable": 1,
+   "quickSearch": 1,
+   "searchable": 1,
+   "type": 3
+  },
+{
+      "key": "py_大海影視",
+   "name": "大海影視[PY]",
+   "api": "./py/大海影視.py",
+   "filterable": 1,
+   "quickSearch": 1,
+   "searchable": 1,
+   "type": 3
+  },
+{
+      "key": "py_太乙影視",
+   "name": "太乙影視[PY]",
+   "api": "./py/太乙影視.py",
+   "filterable": 1,
+   "quickSearch": 1,
+   "searchable": 1,
+   "type": 3
+  },
+{
       "key": "py_歐樂影院",
    "name": "歐樂影院[PY]",
    "api": "./py/歐樂影院.py",
