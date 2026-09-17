@@ -1,6 +1,24 @@
 {
   "sites": [
 {
+      "key": "py_supjav",
+   "name": "supjav[PY]",
+   "api": "./py/supjav.py",
+   "filterable": 1,
+   "quickSearch": 1,
+   "searchable": 1,
+   "type": 3
+  },
+ {
+      "key": "py_MissAV",
+   "name": "MissAV[PY]",
+   "api": "./py/MissAV.py",
+   "filterable": 1,
+   "quickSearch": 1,
+   "searchable": 1,
+   "type": 3
+  },   
+{
             "key": "MissAV",
             "name": "🔞MissAV(翻)",
             "type": 3,
