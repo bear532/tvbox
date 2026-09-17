@@ -261,6 +261,15 @@
 
 "sites":[
 {
+   "key": "py_糯米短劇",
+   "name": "糯米短劇[PY]",
+   "api": "./py/糯米短劇.py",
+   "filterable": 1,
+   "quickSearch": 1,
+   "searchable": 1,
+   "type": 3
+  },
+{
    "key": "豆花影視[PY]",
    "name": "🌸豆花影視[PY]",
    "type": 3,
