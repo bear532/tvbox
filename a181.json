@@ -1,6 +1,24 @@
 {
   "sites": [
 {
+   "key": "py_91JAV最终版",
+   "name": "91JAV最终版[PY]",
+   "api": "./py/91JAV最终版.py",
+   "filterable": 1,
+   "quickSearch": 1,
+   "searchable": 1,
+   "type": 3
+  },    
+ {
+   "key": "py_getav",
+   "name": "getav[PY]",
+   "api": "./py/getav.py",
+   "filterable": 1,
+   "quickSearch": 1,
+   "searchable": 1,
+   "type": 3
+  },   
+{
    "key": "py_MissAV",
    "name": "MissAV[PY]",
    "api": "./py/MissAV.py",
