@@ -9,15 +9,7 @@
    "searchable": 1,
    "type": 3
   },    
- {
-   "key": "py_getav",
-   "name": "getav[PY]",
-   "api": "./py/getav.py",
-   "filterable": 1,
-   "quickSearch": 1,
-   "searchable": 1,
-   "type": 3
-  },   
+
 {
    "key": "py_MissAV",
    "name": "MissAV[PY]",
