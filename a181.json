@@ -1,6 +1,23 @@
 {
   "sites": [
-
+{
+   "key": "py_糯米短劇",
+   "name": "糯米短劇[PY]",
+   "api": "./py/糯米短劇.py",
+   "filterable": 1,
+   "quickSearch": 1,
+   "searchable": 1,
+   "type": 3
+  },
+{
+   "key": "py_91JAV最终版",
+   "name": "91JAV最终版[PY]",
+   "api": "./py/91JAV最终版.py",
+   "filterable": 1,
+   "quickSearch": 1,
+   "searchable": 1,
+   "type": 3
+  },    
 
 {
    "key": "py_MissAV",
