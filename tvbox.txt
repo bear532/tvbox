@@ -261,6 +261,15 @@
 
 "sites":[
 {
+   "key": "秒看TV[PY]",
+   "name": "秒看TV[PY]",
+   "type": 3,
+   "api": "./py/秒看TV.py",
+   "searchable": 1,
+   "quickSearch": 1,
+   "filterable": 0
+  },
+{
    "key": "豆花影視[PY]",
    "name": "🌸豆花影視[PY]",
    "type": 3,
