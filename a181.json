@@ -1,6 +1,21 @@
 {
   "sites": [
 {
+    "key": "ejatv",
+    "name": "ejatv",
+    "type": 3,
+    "api": "./py/ejatv.py",
+    "ua": "OTT Navigator/2.0 (Android)",
+    "style": {
+        "type": "rect",
+        "ratio": 0.75
+    },
+    "ext": {
+                "ua": "OTT Navigator/2.0 (Android)"
+            },
+    "changeable": 1
+},
+  {
    "key": "py_2048成人短劇",
    "name": "2048成人短劇[PY]",
    "api": "./py/2048成人短劇.py",
