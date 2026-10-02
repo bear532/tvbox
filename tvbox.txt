@@ -261,6 +261,15 @@
 
 "sites":[
 {
+   "key": "4gtv[PY]",
+   "name": "4gtv[PY]",
+   "type": 3,
+   "api": "./py/4gtv.py",
+   "searchable": 1,
+   "quickSearch": 1,
+   "filterable": 0
+  },
+{
    "key": "秒看TV[PY]",
    "name": "秒看TV[PY]",
    "type": 3,
