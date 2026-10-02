@@ -264,7 +264,7 @@
    "key": "4gtv[PY]",
    "name": "4gtv[PY]",
    "type": 3,
-   "api": "./py/4gtv.py",
+   "api": "./py/4gtv.js",
    "searchable": 1,
    "quickSearch": 1,
    "filterable": 0
