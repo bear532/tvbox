@@ -222,11 +222,18 @@ def _aes_cbc_decrypt(key: bytes, iv: bytes, data: bytes) -> bytes:
 
 SITE = "https://hongguoduanju.com"
 EPISODE_PREFIX = "hg-episode-v1:"
+# 红果每集视频模型按清晰度返回多条独立线路（360/480/540/720/1080），
+# 每条带 main_url + backup_url 双 CDN 与独立加密材料。这里把清晰度作为
+# TVBox 多线路暴露；内封音/视轨在解密 _rewrite_moov 时天然全部保留。
 _HG_QUALITY_LINES = (
-    ("1080", base64.b64decode("54G16aOOLee6ouaenA==").decode("utf-8")),
+    ("1080", "红果超清"),
+    ("720",  "红果高清"),
+    ("540",  "红果标准"),
+    ("480",  "红果流畅"),
+    ("360",  "红果极速"),
 )
 _QUALITY_LINE_NAME_TO_Q = {
-    "灵风": "1080", "高清": "720", "标准": "540",
+    "超清": "1080", "高清": "720", "标准": "540",
     "流畅": "480", "极速": "360", "1080": "1080", "720": "720",
     "540": "540", "480": "480", "360": "360",
 }
@@ -836,12 +843,13 @@ def decrypt_mp4_cenc(data: bytes, content_key: bytes) -> bytes:
 MEDIA_HEADERS = {"User-Agent": MEDIA_UA, "Referer": "https://novel.snssdk.com/"}
 
 _STREAM_PORT_RANGE = (9990, 10000)
-_STREAM_CHUNK = 1 << 20
+_STREAM_CHUNK = 512 * 1024
 _STREAM_HEAD_PROBE = 1 << 16
 _STREAM_TTL_SECONDS = 900
 _STREAM_MAX_SESSIONS = 4
 _STREAM_STATE: dict[str, Any] = {"port": 0, "server": None, "sessions": {}}
 _STREAM_LOCK = threading.RLock()
+_RANGE_LOCAL = threading.local()
 
 
 def _toplevel_boxes(buf: bytes) -> list[tuple[int, int, bytes]]:
@@ -870,7 +878,11 @@ def _range_get(url: str, start: int, end: int) -> tuple[bytes, int]:
         if attempt:
             time.sleep(_RANGE_FETCH_BACKOFF_SECONDS * attempt)
         try:
-            response = requests.get(url, headers=headers, timeout=60)
+            session = getattr(_RANGE_LOCAL, "session", None)
+            if session is None:
+                session = requests.Session()
+                _RANGE_LOCAL.session = session
+            response = session.get(url, headers=headers, timeout=(8, 25), stream=False)
         except requests.RequestException as error:
             last_error = error
             continue
@@ -880,8 +892,13 @@ def _range_get(url: str, start: int, end: int) -> tuple[bytes, int]:
             )
             continue
         body = response.content
+        # 部分 CDN 忽略 Range 并回 200：尽可能切出所需区间，避免把整段错误交给播放器。
+        if response.status_code == 200 and start > 0 and len(body) > expected:
+            body = body[start:end + 1]
+        elif response.status_code == 200 and len(body) > expected:
+            body = body[:expected]
         # 上游偶发返回短包；短于请求长度时重试，避免播放器收到截断数据。
-        if not body or (response.status_code == 206 and len(body) < expected):
+        if not body or (len(body) < expected and (response.status_code == 206 or start > 0)):
             last_error = HongguoPluginError(
                 "媒体分片长度不足 %d/%d" % (len(body), expected)
             )
@@ -3954,8 +3971,7 @@ class Spider(_BaseSpider):
             play_url.append(eps)
         return {"list": [{"vod_id": sid, "vod_name": str(s.get("series_name") or ""), "vod_pic": str(s.get("series_cover") or ""), "vod_year": "", "vod_area": "", "vod_director": "", "vod_actor": ",".join(actors), "vod_content": str(s.get("series_intro") or ""), "vod_remarks": str(s.get("episode_right_text") or ""), "vod_play_from": "$$$".join(play_from), "vod_play_url": "$$$".join(play_url)}]}
     def playerContent(self, flag, id, vipFlags=None):
-        # 从线路名（flag，如“灵风-红果”）与集 token 双路解析清晰度。
-        # token 已是 'hg-episode-v1:<q>:<vid>'，flag 用于旧壳只传线路名时兜底。
+        """优先使用本机 Range 流式播放，避免切集时先下载并解密整集造成长时间转圈。"""
         token_q, vid = _split_episode_token(id)
         line_q = "1080"
         for name_key, candidate_q in _QUALITY_LINE_NAME_TO_Q.items():
@@ -3964,15 +3980,39 @@ class Spider(_BaseSpider):
                 break
         q = line_q if token_q == "1080" and str(flag) else token_q
         q = q if q in _QUALITY_LINE_NAME_TO_Q else "1080"
+
         if not str(vid).isdigit():
             return {
-                "parse": 1,
-                "jx": 0,
-                "playUrl": "",
-                "url": SITE + "/",
-                "header": {"User-Agent": UA},
+                "parse": 1, "jx": 0, "playUrl": "",
+                "url": SITE + "/", "header": {"User-Agent": UA},
             }
-        # OK影视 / 多数壳：必须走 getProxyUrl（通常已带 do=py），不要覆盖 do
+
+        cfg = {
+            "did": str(getattr(self, "device_id", "") or ""),
+            "iid": str(getattr(self, "install_id", "") or ""),
+        }
+
+        # 首选本机 HTTP Range 流：播放器只请求当前所需的 MP4 分段，
+        # 不再经过 localProxy 将整集下载完、解密完才开始播放。
+        try:
+            port = _start_stream_server()
+        except Exception:
+            port = 0
+        if port:
+            query = urlencode({
+                "vid": vid, "q": q,
+                "did": cfg["did"], "iid": cfg["iid"],
+            })
+            return {
+                "parse": 0, "jx": 0, "playUrl": "",
+                "url": "http://127.0.0.1:%d/hg.mp4?%s" % (port, query),
+                "header": {
+                    "User-Agent": MEDIA_UA,
+                    "Referer": "https://novel.snssdk.com/",
+                },
+            }
+
+        # 若设备不允许启动本机 HTTP 服务，再回退到 TVBox 的内建代理。
         proxy = ""
         try:
             if hasattr(self, "getProxyUrl"):
@@ -3981,53 +4021,21 @@ class Spider(_BaseSpider):
             proxy = ""
         if proxy:
             sep = "&" if "?" in proxy else "?"
-            # 保留壳自带的 do=py，只追加业务参数与清晰度线路
-            url = proxy + sep + urlencode(
-                {
-                    "vid": vid,
-                    "q": q,
-                    "hg": "cenc",
-                    "did": self.device_id or "",
-                    "iid": self.install_id or "",
-                }
-            )
+            url = proxy + sep + urlencode({
+                "vid": vid, "q": q, "hg": "cenc",
+                "did": cfg["did"], "iid": cfg["iid"],
+            })
             return {
-                "parse": 0,
-                "jx": 0,
-                "playUrl": "",
-                "url": url,
+                "parse": 0, "jx": 0, "playUrl": "", "url": url,
                 "header": {
                     "User-Agent": MEDIA_UA,
                     "Referer": "https://novel.snssdk.com/",
                 },
             }
-        # 备用：本机 Range 流（FongMi 更友好）
-        try:
-            port = _start_stream_server()
-        except Exception:
-            port = 0
-        if port:
-            query = urlencode(
-                {
-                    "vid": vid,
-                    "q": q,
-                    "did": self.device_id or "",
-                    "iid": self.install_id or "",
-                }
-            )
-            return {
-                "parse": 0,
-                "jx": 0,
-                "playUrl": "",
-                "url": "http://127.0.0.1:%d/hg.mp4?%s" % (port, query),
-                "header": {"User-Agent": UA},
-            }
+
         return {
-            "parse": 1,
-            "jx": 0,
-            "playUrl": "",
-            "url": SITE + "/",
-            "header": {"User-Agent": UA},
+            "parse": 1, "jx": 0, "playUrl": "",
+            "url": SITE + "/", "header": {"User-Agent": UA},
         }
 
 
