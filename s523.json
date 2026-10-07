@@ -185,6 +185,25 @@
 "sites":[
 //{"key": "公告","name": "公告","type": 3,"api": "csp_Notice","searchable": 0,"changeable": 0,"ext": "./notice.json","jar":"./notice.jar"},
 {
+   "key": "影探4K[PY]",
+   "name": "影探4K[PY]",
+   "type": 3,
+   "api": "./py/影探4K.py",
+   "searchable": 1,
+   "quickSearch": 1,
+   "filterable": 0
+  },
+
+{
+   "key": "秒看TV[PY]",
+   "name": "秒看TV[PY]",
+   "type": 3,
+   "api": "./py/秒看TV.py",
+   "searchable": 1,
+   "quickSearch": 1,
+   "filterable": 0
+  },
+{
    "key": "豆花影視[PY]",
    "name": "🌸豆花影視[PY]",
    "type": 3,
