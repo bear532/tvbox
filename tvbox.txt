@@ -260,15 +260,7 @@
 "rating": [{"name": "rating","request": {"method": "GET","url": {"raw": "https://api.wmdb.tv/api/v1/movie/search?q={name}&limit=1"}},"response": {"result": "this","data": [{"key": "rating","value": "doubanRating"}]}}],
 
 "sites":[
-{
-   "key": "小苹果[PY]",
-   "name": "小苹果[PY]",
-   "type": 3,
-   "api": "./py/小苹果.py",
-   "searchable": 1,
-   "quickSearch": 1,
-   "filterable": 0
-  },
+
 {
    "key": "影探4K[PY]",
    "name": "影探4K[PY]",
