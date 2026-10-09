@@ -110,7 +110,7 @@ fEOzPz7hb/vItV43vBJV2FcM72Hdcv3DccIFuEV9LQ8vcmuetld98eksja9vQ1Ol
         for it in lst:
             cid = it.get('id') or it.get('category_id') or it.get('value'); name = it.get('name') or it.get('label') or it.get('title')
             if cid and name: classes.append({'type_name': str(name), 'type_id': str(cid)})
-        if not classes: classes = [{'type_name': '电影', 'type_id': '100'}, {'type_name': '电视剧', 'type_id': '101'}, {'type_name': '综艺', 'type_id': '102'}, {'type_name': '动漫', 'type_id': '103'}, {'type_name': '体育', 'type_id': '104'}, {'type_name': '纪录片', 'type_id': '105'}, {'type_name': '粤台专区', 'type_id': '106'},{'type_name': '兒童', 'type_id': '107'},{'type_name': '午夜版', 'type_id': '108'}]
+        if not classes: classes = [{'type_name': '电影', 'type_id': '100'}, {'type_name': '电视剧', 'type_id': '101'}, {'type_name': '综艺', 'type_id': '102'}, {'type_name': '动漫', 'type_id': '103'}, {'type_name': '体育', 'type_id': '104'}, {'type_name': '纪录片', 'type_id': '105'}, {'type_name': '粤台专区', 'type_id': '106'},{'type_name': '兒童', 'type_id': '107'}]
         return {'class': classes}
 
     def homeVideoContent(self):
