@@ -261,7 +261,7 @@
 
 "sites":[
 {
-      "jar": "./fm.jar",
+      "jar": "./jar/spider.jar",
       "key": "苹果",
       "name": "苹果 • APP",
       "type": 3,
