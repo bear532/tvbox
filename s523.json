@@ -184,6 +184,15 @@
 "sites":[
 //{"key": "公告","name": "公告","type": 3,"api": "csp_Notice","searchable": 0,"changeable": 0,"ext": "./notice.json","jar":"./notice.jar"},
 {
+   "key": "py_独播库",
+   "name": "独播库[PY]",
+   "api": "./py/独播库.py",
+   "filterable": 1,
+   "quickSearch": 1,
+   "searchable": 1,
+   "type": 3
+  },
+	{
    "key": "UB[PY]",
    "name": "UB[PY]",
    "type": 3,
