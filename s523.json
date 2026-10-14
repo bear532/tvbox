@@ -1,7 +1,7 @@
 
 {
 "wallpaper":"http://www.kf666888.cn/api/tvbox/img",
-"notice":"📢你好！\n 2026 點播源已更新 \n",
+"notice":"📢你好！\n 2026 點播源更新 \n",
 "spider": "./fm.jar",
 
       "doh": [
@@ -102,6 +102,7 @@
 {"name":"duboku","hosts":["w.duboku.io"],"script":["document.getElementsByClassName('vjs-big-play-button')[0].click()"]},
 {"name":"maolvys","hosts":["www.maolvys.com"],"script":["document.getElementsByClassName('swal-buttonswal-button--confirm')[0].click()"]}
 ],
+//"lives":[{"group":"redirect","channels":[{"name":"live","urls":["proxy://do=live&type=txt&ext=aHR0cDovL2JlYXIuOTQyMTg4Lnh5ei90dmJveC9zNTIzbGl2ZS50eHQ="]}]}],
 "lives":
     [
 {
@@ -201,6 +202,7 @@
    "quickSearch": 1,
    "filterable": 0
   },
+
 {
    "key": "影探4K[PY]",
    "name": "影探4K[PY]",
