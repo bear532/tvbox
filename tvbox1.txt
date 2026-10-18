@@ -1,9 +1,0 @@
-﻿{
-   "key": "py_独播库",
-   "name": "独播库[PY]",
-   "api": "./py/独播库.py",
-   "filterable": 1,
-   "quickSearch": 1,
-   "searchable": 1,
-   "type": 3
-  },
