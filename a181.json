@@ -1,6 +1,15 @@
 {
   "sites": [
 {
+   "key": "py_人妖影视",
+   "name": "人妖影视[PY]",
+   "api": "./py/人妖影视.py",
+   "filterable": 1,
+   "quickSearch": 1,
+   "searchable": 1,
+   "type": 3
+  },
+    {
     "key": "ejatv",
     "name": "ejatv",
     "type": 3,
