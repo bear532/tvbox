@@ -260,12 +260,7 @@
 "rating": [{"name": "rating","request": {"method": "GET","url": {"raw": "https://api.wmdb.tv/api/v1/movie/search?q={name}&limit=1"}},"response": {"result": "this","data": [{"key": "rating","value": "doubanRating"}]}}],
 
 "sites":[
-{
-      "key": "紅果短劇",
-      "name": "紅果短劇",
-      "type": 3,
-      "api": "./js/紅果js.js"
- },
+
 {
    "key": "UB[PY]",
    "name": "UB[PY]",
