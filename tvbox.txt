@@ -259,16 +259,12 @@
 
 "rating": [{"name": "rating","request": {"method": "GET","url": {"raw": "https://api.wmdb.tv/api/v1/movie/search?q={name}&limit=1"}},"response": {"result": "this","data": [{"key": "rating","value": "doubanRating"}]}}],
 
-"sites":[
-{
+"sites":[{
       "key": "Hongguo",
-      "name": "红果",
+      "name": "红果短剧",
       "type": 3,
-      "api": "../js/Hongguojs_vod.js",
-      "searchable": 1,
-      "quickSearch": 1,
-      "filterable": 1
-    },
+      "api": "./js/Hongguojs_vod.js"
+ },
 {
    "key": "UB[PY]",
    "name": "UB[PY]",
