@@ -1,39 +1,27 @@
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 import base64
 import binascii
 import bisect
 import hashlib
-import html as html_lib
-import http.cookiejar
+import gzip
 import json
-import lzma
 import os
+import lzma
 import random
 import re
 import struct
 import tempfile
+import concurrent.futures
 import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
+import uuid
 from collections.abc import Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from html.parser import HTMLParser
 from typing import Any
-from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
-
-try:
-    from base.spider import Spider as BaseSpider
-except Exception:
-    try:
-        import sys as _sys
-
-        _sys.path.append("..")
-        from base.spider import Spider as BaseSpider
-    except Exception:
-        class BaseSpider:
-            pass
-
+from urllib.parse import parse_qs, quote, urlencode, urlparse
+import requests
 try:
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -44,7 +32,19 @@ try:
     from Crypto.Cipher import AES as CryptoAES
 except ImportError:
     CryptoAES = None
+try:
+    from base.spider import Spider as _BaseSpider
+except Exception:
+    try:
+        import sys as _sys
+        _sys.path.append("..")
+        from base.spider import Spider as _BaseSpider
+    except Exception:
+        class _BaseSpider:
+            pass
 
+# FongMi/TVBox 的 Chaquopy 环境未必带 cryptography，多数壳只带 pycryptodome。
+# 统一入口，避免调用点直接依赖某一个库。
 if Cipher is not None:
     AES_BACKEND = "cryptography"
 elif CryptoAES is not None:
@@ -52,57 +52,8 @@ elif CryptoAES is not None:
 else:
     AES_BACKEND = "none"
 
-SITE = "https://hongguoduanju.com"
-VIDEO_URL = "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/"
-UA = "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
-APP_UA = "com.phoenix.read/71332 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)"
-MEDIA_UA = "com.phoenix.read/71332"
-EPISODE_PREFIX = "hg-episode-v1:"
-_HG_QUALITY_LINES = (
-    ("auto", "智能"),
-    ("1080", "超清"),
-    ("720", "高清"),
-    ("540", "标准"),
-    ("480", "流畅"),
-    ("360", "极速"),
-)
-_QUALITY_LINE_NAME_TO_Q = {
-    "智能": "auto",
-    "超清": "1080", "高清": "720", "标准": "540",
-    "流畅": "480", "极速": "360", "1080": "1080", "720": "720",
-    "540": "540", "480": "480", "360": "360",
-}
-_HTML_FETCH_ATTEMPTS = 3
-_HTML_FETCH_BACKOFF_SECONDS = 1.5
-_RANGE_FETCH_ATTEMPTS = 3
-_RANGE_FETCH_BACKOFF_SECONDS = 0.8
-
-_FILTER_TOPIC = ["全部", "现言", "女性成长", "脑洞", "奇幻", "玄幻", "古言", "战神", "宫斗", "仙侠", "权谋", "种田", "年代爱情", "悬疑", "喜剧", "青春", "志怪", "民国爱情", "灵异", "家国情怀", "法律", "刑侦", "抗战", "武侠", "民国传奇", "求生", "动作", "科幻", "恐怖", "商战"]
-_FILTER_BACKGROUND = ["全部", "现代", "都市", "古代", "乡村", "年代", "架空", "职场", "民国", "校园", "宫廷", "荒岛"]
-_FILTER_SETTING = ["全部", "打脸虐渣", "大男主", "大女主", "马甲", "重生", "穿越", "系统", "先婚后爱", "家长里短", "小人物", "破镜重圆", "神豪", "豪门", "强者回归", "异能", "虐恋", "传承觉醒", "医生", "强强联合", "赘婿逆袭", "甜宠", "娱乐圈", "神医", "青梅竹马", "姐弟恋", "玄学", "追妻火葬场", "业界精英", "一见钟情", "福宝", "捞偏门", "反派主角", "萌宠", "双向救赎", "方言", "白月光", "灵魂互换", "病娇", "暴富", "黑道", "丧尸", "特种兵"]
-
-
-_DRAMA_CAT = ["爱情", "年代", "逆袭", "传奇", "成长", "家庭", "家族", "萌宝", "悬疑", "惊悚", "恐怖", "志怪", "古装", "玄幻", "奇幻", "都市", "青春", "喜剧", "科幻", "灾难", "动作冒险", "战争", "综艺", "剧情"]
-
-
-def _filter_groups():
-    groups = []
-    for key, name, values in (
-        ("topic", "主题", _FILTER_TOPIC),
-        ("background", "背景", _FILTER_BACKGROUND),
-        ("setting", "设定", _FILTER_SETTING),
-    ):
-        groups.append(
-            {
-                "key": key,
-                "name": name,
-                "value": [{"n": v, "v": "" if v == "全部" else v} for v in values],
-            }
-        )
-    return groups
-
-
 class _PureAES128:
+    """纯 Python AES-128，供无 pycryptodome/cryptography 的壳使用。"""
 
     _S = (
         99,124,119,123,242,107,111,197,48,1,103,43,254,215,171,118,202,130,201,125,250,89,71,240,
@@ -253,23 +204,10 @@ def _aes_ctr_decrypt(key: bytes, counter: bytes, data: bytes) -> bytes:
         decryptor = Cipher(algorithms.AES(key), modes.CTR(counter)).decryptor()
         return decryptor.update(data) + decryptor.finalize()
     if AES_BACKEND == "pycryptodome":
-        initial = int.from_bytes(counter, "big")
-        try:
-            cipher = CryptoAES.new(
-                key, CryptoAES.MODE_CTR, nonce=b"", initial_value=initial
-            )
-            return cipher.decrypt(data)
-        except Exception:
-            pass
-        try:
-            from Crypto.Util.Counter import new as _counter_new
-
-            cipher = CryptoAES.new(
-                key, CryptoAES.MODE_CTR, counter=_counter_new(128, initial_value=initial)
-            )
-            return cipher.decrypt(data)
-        except Exception:
-            pass
+        cipher = CryptoAES.new(
+            key, CryptoAES.MODE_CTR, nonce=b"", initial_value=counter
+        )
+        return cipher.decrypt(data)
     return _pure_ctr_decrypt(key, counter, data)
 
 
@@ -284,12 +222,449 @@ def _aes_cbc_decrypt(key: bytes, iv: bytes, data: bytes) -> bytes:
     return _pure_cbc_decrypt(key, iv, data)
 
 
+def _pure_cbc_encrypt(key: bytes, iv: bytes, data: bytes) -> bytes:
+    cipher = _PureAES128(key)
+    prev = bytearray(iv)
+    out = bytearray()
+    for off in range(0, len(data), 16):
+        block = bytearray(a ^ b for a, b in zip(data[off:off + 16], prev))
+        enc = cipher.encrypt_block(bytes(block))
+        out += enc
+        prev = bytearray(enc)
+    return bytes(out)
+
+
+def _aes_cbc_encrypt(key: bytes, iv: bytes, data: bytes) -> bytes:
+    if not data:
+        return b""
+    if AES_BACKEND == "cryptography":
+        encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+        return encryptor.update(data) + encryptor.finalize()
+    if AES_BACKEND == "pycryptodome":
+        return CryptoAES.new(key, CryptoAES.MODE_CBC, iv).encrypt(data)
+    return _pure_cbc_encrypt(key, iv, data)
+
+
+SITE = "https://hongguoduanju.com"
+EPISODE_PREFIX = "hg-episode-v1:"
+# 红果每集视频模型按清晰度返回多条独立线路（360/480/540/720/1080），
+# 每条带 main_url + backup_url 双 CDN 与独立加密材料。这里把清晰度作为
+# TVBox 多线路暴露；内封音/视轨在解密 _rewrite_moov 时天然全部保留。
+_HG_QUALITY_LINES = (
+    ("1080", "超清"),
+    ("720",  "高清"),
+    ("540",  "标准"),
+    ("480",  "流畅"),
+    ("360",  "极速"),
+)
+_QUALITY_LINE_NAME_TO_Q = {
+    "超清": "1080", "高清": "720", "标准": "540",
+    "流畅": "480", "极速": "360", "1080": "1080", "720": "720",
+    "540": "540", "480": "480", "360": "360",
+}
+
+
+def _split_episode_token(token: str) -> tuple[str, str]:
+    """把 'hg-episode-v1:<q>:<vid>' 解析为 (清晰度, vid)；兼容旧格式 'hg-episode-v1:<vid>'。"""
+    body = str(token or "")
+    if body.startswith(EPISODE_PREFIX):
+        body = body[len(EPISODE_PREFIX):]
+    if ":" in body:
+        head, tail = body.split(":", 1)
+        if head.isdigit():
+            return head, tail
+    return "1080", body
+
+# 官网搜索 SSR 固定约 10 条且几乎不认 page；用多关键词轮换实现“翻页”
+_AI_MANJU_KEYWORDS = [
+    "AI漫剧", "AI动画", "AI短剧", "AI动漫", "漫剧AI", "二次元AI", "AI漫画", "动画短剧",
+]
+
+
+# ---- 本机解密缓存 + 自动清理 ----
+_HG_CACHE_DIR = None
+_HG_CACHE_MAX_FILES = 8          # 最多保留集数
+_HG_CACHE_MAX_BYTES = 400 * 1024 * 1024  # 总容量约 400MB
+_HG_CACHE_MAX_AGE = 6 * 3600     # 超过 6 小时自动删
+
+# 中国出口代理（字节 fqnovel / log.snssdk.com 对非中国 IP 返回空 body）。
+# 由 init(extend) 的 {"proxy": "http://host:port"} 或环境变量 HG_PROXY / HTTPS_PROXY 设置。
+_HG_PROXY = ""
+
+
+def _hg_set_proxy(proxy: str | None) -> None:
+    global _HG_PROXY
+    value = ""
+    if proxy:
+        value = str(proxy).strip()
+    if not value:
+        # 只读专用 HG_PROXY，不读通用 HTTP(S)_PROXY（Minis 沙盒自带代理会误用）。
+        candidate = os.environ.get("HG_PROXY", "").strip()
+        if candidate:
+            value = candidate
+    _HG_PROXY = value
+
+
+def _hg_proxies() -> dict[str, str] | None:
+    if not _HG_PROXY:
+        return None
+    return {"http": _HG_PROXY, "https": _HG_PROXY}
+
+
+# ==================== 2026-11 新签名体系 ====================
+# 红果已从 gorgon/medusa/helios 迁到 argus(Simon64/128)+ladon，且播放走番茄短剧通道。
+# 移植自 zfdang/hongguo-open-player (GPL-3.0) argus.js + sm3.js。
+_MASK64 = 0xFFFFFFFFFFFFFFFF
+_SIMON_Z = 0x3DC94C3A046D678B
+
+
+def _rotl64(x, n):
+    n &= 63
+    return x & _MASK64 if n == 0 else ((x << n) | (x >> (64 - n))) & _MASK64
+
+
+def _rotr64(x, n):
+    n &= 63
+    return x & _MASK64 if n == 0 else ((x >> n) | (x << (64 - n))) & _MASK64
+
+
+_SM3_IV = (0x7380166F, 0x4914B2B9, 0x172442D7, 0xDA8A0600,
+           0xA96F30BC, 0x163138AA, 0xE38DEE4D, 0xB0FB0E4E)
+
+
+def _sm3_rotl(x, n):
+    n &= 31
+    return x & 0xFFFFFFFF if n == 0 else ((x << n) | (x >> (32 - n))) & 0xFFFFFFFF
+
+
+def _sm3(data):
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    src = bytes(data)
+    bit_len = len(src) * 8
+    pad_len = ((len(src) + 9 + 63) // 64) * 64
+    buf = bytearray(pad_len)
+    buf[:len(src)] = src
+    buf[len(src)] = 0x80
+    struct.pack_into(">Q", buf, pad_len - 8, bit_len)
+    state = list(_SM3_IV)
+    for off in range(0, pad_len, 64):
+        w = [struct.unpack_from(">I", buf, off + i * 4)[0] for i in range(16)]
+        w += [0] * 52
+        for i in range(16, 68):
+            x = w[i - 16] ^ w[i - 9] ^ _sm3_rotl(w[i - 3], 15)
+            w[i] = (x ^ _sm3_rotl(x, 15) ^ _sm3_rotl(x, 23) ^ _sm3_rotl(w[i - 13], 7) ^ w[i - 6]) & 0xFFFFFFFF
+        a, b, c, d, e, f, g, h = state
+        for i in range(64):
+            a12 = _sm3_rotl(a, 12)
+            s1 = _sm3_rotl((a12 + e + _sm3_rotl(0x79CC4519 if i < 16 else 0x7A879D8A, i)) & 0xFFFFFFFF, 7)
+            s2 = s1 ^ a12
+            ff = (a ^ b ^ c) if i < 16 else ((a & b) | (a & c) | (b & c))
+            gg = (e ^ f ^ g) if i < 16 else ((e & f) | ((~e & 0xFFFFFFFF) & g))
+            tt1 = (ff + d + s2 + (w[i] ^ w[i + 4])) & 0xFFFFFFFF
+            tt2 = (gg + h + s1 + w[i]) & 0xFFFFFFFF
+            d, c, b, a = c, _sm3_rotl(b, 9), a, tt1
+            h, g, f = g, _sm3_rotl(f, 19), e
+            e = (tt2 ^ _sm3_rotl(tt2, 9) ^ _sm3_rotl(tt2, 17)) & 0xFFFFFFFF
+        state = [(x ^ y) & 0xFFFFFFFF for x, y in zip(state, [a, b, c, d, e, f, g, h])]
+    return struct.pack(">8I", *state)
+
+
+class _HGProto:
+    def __init__(self):
+        self.fields = []
+
+    def varint(self, idx, v):
+        self.fields.append((idx, 0, int(v) & _MASK64))
+        return self
+
+    def blob(self, idx, data):
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+        self.fields.append((idx, 2, bytes(data)))
+        return self
+
+    def utf8(self, idx, s):
+        return self.blob(idx, ("" if s is None else str(s)).encode("utf-8"))
+
+    def message(self, idx, nested):
+        return self.blob(idx, nested.to_buf())
+
+    @staticmethod
+    def _vi(n):
+        out = bytearray()
+        n &= _MASK64
+        while n >= 0x80:
+            out.append((n & 0x7F) | 0x80)
+            n >>= 7
+        out.append(n)
+        return bytes(out)
+
+    def to_buf(self):
+        parts = bytearray()
+        for tag, typ, val in self.fields:
+            parts += self._vi((tag << 3) | typ)
+            if typ == 0:
+                parts += self._vi(val)
+            else:
+                parts += self._vi(len(val))
+                parts += val
+        return bytes(parts)
+
+
+def _simon_expand(key):
+    ks = [int.from_bytes(key[i * 8:(i + 1) * 8], "little") for i in range(4)]
+    for i in range(4, 72):
+        tmp = _rotr64(ks[i - 1], 3) ^ ks[i - 3]
+        tmp ^= _rotr64(tmp, 1)
+        ks.append((~ks[i - 4] ^ tmp ^ ((_SIMON_Z >> ((i - 4) % 62)) & 1) ^ 3) & _MASK64)
+    return ks
+
+
+def _simon_encrypt(key, data):
+    ks = _simon_expand(key)
+    out = bytearray(len(data))
+    for i in range(0, len(data), 16):
+        xi = int.from_bytes(data[i:i + 8], "little")
+        xi1 = int.from_bytes(data[i + 8:i + 16], "little")
+        for rk in ks:
+            tmp = xi1
+            f = _rotl64(xi1, 1) & _rotl64(xi1, 8)
+            xi1 = (xi ^ f ^ _rotl64(xi1, 2) ^ rk) & _MASK64
+            xi = tmp
+        out[i:i + 8] = xi.to_bytes(8, "little")
+        out[i + 8:i + 16] = xi1.to_bytes(8, "little")
+    return bytes(out)
+
+
+def _ladon_table(md5_hex):
+    ht = bytearray(288)
+    src = md5_hex.encode("utf-8")[:32]
+    ht[:len(src)] = src
+    b0 = int.from_bytes(ht[0:8], "little")
+    b8 = int.from_bytes(ht[8:16], "little")
+    temp = [int.from_bytes(ht[16:24], "little"), int.from_bytes(ht[24:32], "little")]
+    for i in range(34):
+        x8 = (_rotr64(b8, 8) + b0) & _MASK64
+        x8 ^= i
+        temp.append(x8)
+        x8 ^= _rotl64(b0, 3)
+        struct.pack_into("<Q", ht, (i + 1) * 8, x8 & _MASK64)
+        b0 = x8
+        b8 = temp.pop(0)
+    return [int.from_bytes(ht[i * 8:(i + 1) * 8], "little") for i in range(36)]
+
+
+def _ladon_encrypt(khronos, lc_id, aid, random_bytes):
+    data = ("%d-%d-%s" % (khronos, lc_id, aid)).encode("utf-8")
+    ht = _ladon_table(hashlib.md5(bytes(random_bytes) + str(aid).encode("utf-8")).hexdigest())
+    pad = 16 - (len(data) % 16)
+    inp = bytearray(data + bytes([pad]) * pad)
+    out = bytearray()
+    for i in range(0, len(inp), 16):
+        d0 = int.from_bytes(inp[i:i + 8], "little")
+        d1 = int.from_bytes(inp[i + 8:i + 16], "little")
+        for r in range(34):
+            d1 = (ht[r] ^ ((d0 + _rotr64(d1, 8)) & _MASK64)) & _MASK64
+            d0 = (d1 ^ _rotl64(d0, 3)) & _MASK64
+        out += d0.to_bytes(8, "little") + d1.to_bytes(8, "little")
+    return base64.b64encode(bytes(random_bytes) + bytes(out)).decode()
+
+
+_HG_SIGN_KEY = bytes.fromhex("fc78e0a9657a0c748ce51559903ccf03510e51d3cff232d71343e88a321c5304")
+_HG_ARGUS_AES_KEY = bytes.fromhex("d31e3718288a1027baab59f146a09a9c")
+_HG_ARGUS_AES_IV = bytes.fromhex("ea180a0336ed352fcd24e4d50018ae54")
+_HG_MAGIC8 = bytes([0xF2, 0xF7, 0xFC, 0xFF, 0xF2, 0xF7, 0xFC, 0xFF])
+_HG_TAIL9 = bytes([0xEA, 0xFB, 0x2C, 0xFE, 0x85, 0x68, 0x51, 0x91, 0x54])
+_HG_LICENSE_ID = 1611921764
+
+
+def _pkcs7(buf):
+    pad = 16 - (len(buf) % 16)
+    return buf + bytes([pad]) * pad
+
+
+def _hg_qparam(query, name):
+    if not query:
+        return None
+    from urllib.parse import unquote
+    for part in query.split("&"):
+        eq = part.find("=")
+        k = part if eq < 0 else part[:eq]
+        if unquote(k) == name:
+            return "" if eq < 0 else unquote(part[eq + 1:])
+    return None
+
+
+def _argus_sign(query, stub_hex, ts, aid, device_id, install_id, rand_field):
+    bean = _HGProto()
+    bean.varint(1, 1077940818).varint(2, 2).varint(3, rand_field & 0xFFFFFFFF)
+    bean.utf8(4, str(1967 if aid == 0 else aid)).utf8(5, device_id or "")
+    bean.utf8(6, str(_HG_LICENSE_ID)).utf8(7, _hg_qparam(query, "version_name") or "")
+    bean.utf8(8, "v04.04.05-ov-android").varint(9, 134744640).blob(10, b"\0" * 8).varint(11, 0)
+    bean.varint(12, (int(ts) << 1) & 0xFFFFFFFF)
+    bean.blob(13, _sm3(bytes.fromhex(stub_hex))[:6] if stub_hex else _sm3(b"\0" * 16)[:6])
+    bean.blob(14, _sm3(query.encode("utf-8"))[:6] if query else _sm3(b"\0" * 16)[:6])
+    sub15 = _HGProto()
+    sub15.varint(1, 1).varint(2, 1).varint(3, 1).varint(7, 0xC792ECCC)
+    bean.message(15, sub15)
+    bean.utf8(16, install_id or "").utf8(20, "none").varint(21, 738)
+    sub23 = _HGProto()
+    sub23.utf8(1, "NX551J").varint(2, 8196).varint(4, 0x80E0D800)
+    bean.message(23, sub23)
+    bean.varint(25, 2)
+    enc_pb = _simon_encrypt(_HG_SIGN_KEY, _pkcs7(bean.to_buf()))
+    un = _HG_MAGIC8 + enc_pb + _HG_TAIL9
+    buf = bytearray(len(un))
+    buf[:8] = _HG_MAGIC8
+    for i in range(8, len(un)):
+        buf[i] = un[i] ^ _HG_MAGIC8[i % 8]
+    buf.reverse()
+    encrypted = _aes_cbc_encrypt(_HG_ARGUS_AES_KEY, _HG_ARGUS_AES_IV, _pkcs7(bytes(buf) + b"ao"))
+    return base64.b64encode(b"\xf2\x81" + encrypted).decode()
+
+
+def _hg_sign_headers(query, body, ts, aid=1967):
+    aid_val = int(_hg_qparam(query, "aid") or aid or 1967)
+    stub = hashlib.md5(bytes(body)).hexdigest() if body else ""
+    rand_field = struct.unpack("<i", os.urandom(4))[0]
+    headers = {
+        "x-ss-req-ticket": str(int(ts) * 1000),
+        "x-khronos": str(int(ts)),
+        "x-ladon": _ladon_encrypt(int(ts), _HG_LICENSE_ID, aid_val, os.urandom(4)),
+        "x-argus": _argus_sign(query, stub, int(ts), aid_val,
+                               _hg_qparam(query, "device_id") or "",
+                               _hg_qparam(query, "iid") or "", rand_field),
+    }
+    if stub:
+        headers["x-ss-stub"] = stub.upper()
+    return headers
+
+
+_HG_REGISTER_URL = ("https://log5-applog-lf.fqnovel.com/service/2/device_register/"
+                    "?tt_data=a&cronet_version=8d40f833_2026-03-03&ttnet_version=4.2.243.31-douyin"
+                    "&use_store_region_cookie=1")
+_HG_KDF_SALT = bytes.fromhex(
+    "4dd4c2e6b83162090e52b3c7a6733ba41cb2462b829ab58a196b39db57177524"
+    "f49baf7f08e8d68d26a72e37c1a95a2f1f05a51892aef2949732b62a38aadd58")
+
+_DEVICE_PAIR_FILE = "hg_device_pair.json"
+
+
+def _hg_device_pair_save(pair: Mapping[str, Any]) -> None:
+    try:
+        path = os.path.join(_hg_cache_dir(), _DEVICE_PAIR_FILE)
+        data = {"device_id": str(pair.get("device_id") or ""),
+                "install_id": str(pair.get("install_id") or ""),
+                "cdid": str(pair.get("cdid") or ""),
+                "cookie": str(pair.get("cookie") or ""),
+                "ts": int(time.time())}
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+    except Exception:
+        pass
+
+
+def _hg_device_pair_load() -> dict[str, str] | None:
+    try:
+        path = os.path.join(_hg_cache_dir(), _DEVICE_PAIR_FILE)
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        did = str(data.get("device_id") or "")
+        iid = str(data.get("install_id") or "")
+        if did.isdigit() and iid.isdigit() and len(did) >= 8 and len(iid) >= 8:
+            return {"device_id": did, "install_id": iid,
+                    "cdid": str(data.get("cdid") or ""),
+                    "cookie": str(data.get("cookie") or "")}
+    except Exception:
+        pass
+    return None
+
+
+_HG_REGISTER_URL = ("https://log5-applog-lf.fqnovel.com/service/2/device_register/"
+                    "?tt_data=a&cronet_version=8d40f833_2026-03-03&ttnet_version=4.2.243.31-douyin"
+                    "&use_store_region_cookie=1")
+_HG_KDF_SALT = bytes.fromhex(
+    "4dd4c2e6b83162090e52b3c7a6733ba41cb2462b829ab58a196b39db57177524"
+    "f49baf7f08e8d68d26a72e37c1a95a2f1f05a51892aef2949732b62a38aadd58")
+
+_DEVICE_PAIR_FILE = "hg_device_pair.json"
+
+
+def _hg_cache_dir() -> str:
+    global _HG_CACHE_DIR
+    if _HG_CACHE_DIR and os.path.isdir(_HG_CACHE_DIR):
+        return _HG_CACHE_DIR
+    candidates = []
+    # 优先 App 可写缓存目录（OK影视 / FongMi 常见路径）
+    for root in (
+        "/data/user/0/com.fongmi.android.oktv/cache",
+        "/data/data/com.fongmi.android.oktv/cache",
+        "/data/user/0/com.fongmi.android.tv/cache",
+        "/data/data/com.fongmi.android.tv/cache",
+        "/sdcard/Android/data/com.fongmi.android.oktv/cache",
+        "/sdcard/Android/data/com.fongmi.android.tv/cache",
+        "/sdcard/Download",
+    ):
+        candidates.append(os.path.join(root, "hg_cenc_cache"))
+    try:
+        candidates.append(os.path.join(tempfile.gettempdir(), "hg_cenc_cache"))
+    except Exception:
+        pass
+    try:
+        candidates.append(os.path.join(os.getcwd(), "hg_cenc_cache"))
+    except Exception:
+        pass
+    for path in candidates:
+        try:
+            os.makedirs(path, exist_ok=True)
+            test = os.path.join(path, ".w")
+            with open(test, "wb") as fh:
+                fh.write(b"1")
+            os.remove(test)
+            _HG_CACHE_DIR = path
+            return path
+        except Exception:
+            continue
+    _HG_CACHE_DIR = tempfile.mkdtemp(prefix="hg_cenc_")
+    return _HG_CACHE_DIR
+
+
+def _hg_cache_path(vid: str, quality: str) -> str:
+    safe = re.sub(r"[^0-9A-Za-z_-]", "", str(vid))[:40]
+    q = re.sub(r"[^0-9A-Za-z]", "", str(quality or "q"))[:8]
+    return os.path.join(_hg_cache_dir(), "%s_%s.mp4" % (safe, q))
+
+
+def _hg_cache_list() -> list:
+    root = _hg_cache_dir()
+    files = []
+    try:
+        now = time.time()
+        for name in os.listdir(root):
+            if not name.endswith(".mp4"):
+                continue
+            fp = os.path.join(root, name)
+            if not os.path.isfile(fp):
+                continue
+            try:
+                st = os.stat(fp)
+            except Exception:
+                continue
+            files.append({"path": fp, "size": st.st_size, "mtime": st.st_mtime, "age": now - st.st_mtime})
+    except Exception:
+        return []
+    files.sort(key=lambda x: x["mtime"])  # 旧 -> 新
+    return files
+
+
 def _hg_cache_cleanup(force: bool = False) -> None:
+    """按时间 + 数量 + 体积自动清理本机缓存。"""
     try:
         files = _hg_cache_list()
         if not files and not force:
             return
-
+        # 1) 过期删除
         remain = []
         for item in files:
             if item["age"] > _HG_CACHE_MAX_AGE or item["size"] <= 0:
@@ -299,7 +674,7 @@ def _hg_cache_cleanup(force: bool = False) -> None:
                     pass
             else:
                 remain.append(item)
-
+        # 2) 超量删除最旧
         total = sum(x["size"] for x in remain)
         while remain and (len(remain) > _HG_CACHE_MAX_FILES or total > _HG_CACHE_MAX_BYTES):
             old = remain.pop(0)
@@ -308,7 +683,7 @@ def _hg_cache_cleanup(force: bool = False) -> None:
             except Exception:
                 pass
             total -= old["size"]
-
+        # 3) 清理残留 tmp
         root = _hg_cache_dir()
         for name in os.listdir(root):
             if name.endswith(".tmp") or name == ".w":
@@ -339,7 +714,7 @@ def _hg_cache_get(vid: str, quality: str) -> bytes | None:
     path = _hg_cache_path(vid, quality)
     try:
         if os.path.isfile(path) and os.path.getsize(path) > 64:
-
+            # 读时刷新 mtime，避免刚播又被当过期删
             try:
                 os.utime(path, None)
             except Exception:
@@ -378,59 +753,191 @@ def _aes_is_fast() -> bool:
     return AES_BACKEND in ("cryptography", "pycryptodome")
 
 
+def _http_get_bytes(url: str, headers: dict | None = None, timeout: int = 60) -> bytes:
+    h = dict(headers or {})
+    r = requests.get(url, headers=h, timeout=timeout)
+    r.raise_for_status()
+    return r.content
+
+
+def _probe_content_length(url: str, headers: dict | None = None, timeout: int = 30) -> int:
+    h = dict(headers or {})
+    try:
+        r = requests.head(url, headers=h, timeout=timeout, allow_redirects=True)
+        if r.status_code < 400:
+            cl = r.headers.get("Content-Length") or r.headers.get("content-length")
+            if cl and str(cl).isdigit():
+                return int(cl)
+    except Exception:
+        pass
+    try:
+        hh = dict(h)
+        hh["Range"] = "bytes=0-0"
+        r = requests.get(url, headers=hh, timeout=timeout)
+        cr = r.headers.get("Content-Range") or r.headers.get("content-range") or ""
+        # bytes 0-0/12345
+        if "/" in cr:
+            total = cr.split("/")[-1].strip()
+            if total.isdigit():
+                return int(total)
+        cl = r.headers.get("Content-Length") or "0"
+        if str(cl).isdigit() and int(cl) > 1:
+            return int(cl)
+    except Exception:
+        pass
+    return 0
+
+
+def _download_range(url: str, start: int, end: int, headers: dict | None, timeout: int) -> tuple[int, bytes]:
+    h = dict(headers or {})
+    h["Range"] = "bytes=%d-%d" % (start, end)
+    last_err = None
+    for attempt in range(3):
+        try:
+            r = requests.get(url, headers=h, timeout=timeout)
+            if r.status_code not in (200, 206):
+                raise RuntimeError("range http %s" % r.status_code)
+            data = r.content
+            if not data:
+                raise RuntimeError("empty range body")
+            return start, data
+        except Exception as err:
+            last_err = err
+            try:
+                time.sleep(0.25 * (attempt + 1))
+            except Exception:
+                pass
+    raise RuntimeError("range %s-%s failed: %s" % (start, end, last_err))
+
+
+def _multi_download(url: str, headers: dict | None = None, timeout: int = 90, workers: int = 4) -> bytes:
+    """多分片并行下载，失败则回退整文件单线程。"""
+    headers = dict(headers or {})
+    total = _probe_content_length(url, headers, timeout=min(30, timeout))
+    # 太小或未知长度：直接整下
+    if total <= 0 or total < 2 * 1024 * 1024:
+        return _http_get_bytes(url, headers, timeout=timeout)
+
+    # 分片大小 1~2MB，线程数限制
+    workers = max(2, min(int(workers or 4), 6))
+    chunk = max(1 * 1024 * 1024, min(2 * 1024 * 1024, total // workers))
+    ranges = []
+    start = 0
+    while start < total:
+        end = min(total - 1, start + chunk - 1)
+        ranges.append((start, end))
+        start = end + 1
+
+    parts: dict[int, bytes] = {}
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            futs = [
+                pool.submit(_download_range, url, s, e, headers, timeout)
+                for s, e in ranges
+            ]
+            for fut in concurrent.futures.as_completed(futs):
+                s, data = fut.result()
+                parts[s] = data
+    except Exception:
+        # 并行失败回退
+        return _http_get_bytes(url, headers, timeout=timeout)
+
+    buf = bytearray()
+    for s, e in ranges:
+        piece = parts.get(s)
+        if piece is None:
+            return _http_get_bytes(url, headers, timeout=timeout)
+        buf.extend(piece)
+    if len(buf) < total * 0.95:
+        # 明显不完整
+        return _http_get_bytes(url, headers, timeout=timeout)
+    return bytes(buf)
+
+
+
+_MANJU_KEYWORDS = [
+    "漫剧", "动漫短剧", "二次元", "漫画短剧", "国漫短剧", "日漫", "动态漫", "动画剧",
+]
+
+# ===== 官方内容类型与分类（取自官方 hongguoduanju.com 的分类路由体系，与 App 同源同 ID）=====
+_HG_CONTENT_TYPES = [
+    ("real-drama", "真人剧", [
+        ("", "全部"), ("romance", "爱情"), ("period", "年代"), ("comeback", "逆袭"),
+        ("legend", "传奇"), ("growth", "成长"), ("family", "家庭"), ("clan", "家族"),
+        ("cute-kids", "萌宝"), ("suspense", "悬疑"), ("thriller", "惊悚"), ("horror", "恐怖"),
+        ("supernatural", "志怪"), ("costume", "古装"), ("fantasy", "玄幻"), ("wonder", "奇幻"),
+        ("urban", "都市"), ("youth", "青春"), ("comedy", "喜剧"), ("sci-fi", "科幻"),
+        ("disaster", "灾难"), ("action-adventure", "动作冒险"), ("war", "战争"),
+        ("variety", "综艺"), ("drama", "剧情"),
+    ]),
+    ("comic-drama", "漫剧", [
+        ("", "全部"), ("creative", "脑洞"), ("fantasy", "玄幻"), ("drama", "剧情"),
+        ("apocalypse", "末世"), ("wealthy-family", "豪门"), ("wonder", "奇幻"),
+        ("sci-fi", "科幻"), ("adventure", "冒险"),
+    ]),
+    ("ai-drama", "AI剧", [
+        ("", "全部"), ("creative", "脑洞"), ("fantasy", "玄幻"), ("drama", "剧情"),
+        ("apocalypse", "末世"), ("wealthy-family", "豪门"), ("wonder", "奇幻"),
+        ("sci-fi", "科幻"), ("adventure", "冒险"),
+    ]),
+    ("comic", "漫画", [("", "全部")]),
+]
+_HG_ROUTES = {k: v for k, v in ((a, b) for a, b, _ in _HG_CONTENT_TYPES)}
+_HG_ALIAS = {
+    "all": "real-drama", "latest": "real-drama", "hot": "real-drama",
+    "male": "real-drama", "female": "real-drama", "短剧": "real-drama",
+    "ai_comic": "ai-drama", "ai_manju": "ai-drama", "AI漫剧": "ai-drama",
+    "manju": "comic-drama", "漫剧": "comic-drama",
+}
+
+def _hg_route_of(tid):
+    t = str(tid or "").strip()
+    if t in _HG_ROUTES:
+        return t
+    return _HG_ALIAS.get(t, "real-drama")
+
+def _hg_category_page(route, cat, page):
+    """官方分类页：/category/{route}/{item}?page=N，数据在 _ROUTER_DATA。"""
+    route = _hg_route_of(route)
+    path = "/category/" + route
+    if cat:
+        path += "/" + str(cat)
+    sess = requests.Session()
+    sess.trust_env = False
+    sess.headers.update({"User-Agent": UA, "Referer": SITE + "/"})
+    r = sess.get(SITE + path, params={"page": str(max(1, int(page or 1)))}, timeout=25)
+    html = r.text or ""
+    m = re.search(r"(?:window\.)?_ROUTER_DATA\s*=\s*", html)
+    if not m:
+        raise HongguoPluginError("分类页没有路由数据")
+    v, _ = json.JSONDecoder().raw_decode(html[m.end():])
+    p = ((v.get("loaderData") or {}).get("category_$") or {})
+    return p
+
+VIDEO_URL = "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/"
+_HG_SHORT_API = "https://api3-normal-sinfonlinea.fqnovel.com/novel/player/video_model/v1/"
+_HG_SHORT_UA = "com.dragon.read"
+_HG_PLAY_UA = ("com.phoenix.read/74332 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)")
+UA = "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+APP_UA = "com.phoenix.read/71332 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)"
+MEDIA_UA = "com.phoenix.read/71332"
+
+
+
+
+_HTML_FETCH_ATTEMPTS = 3
+
+_HTML_FETCH_BACKOFF_SECONDS = 1.5
+
+_RANGE_FETCH_ATTEMPTS = 3
+
+_RANGE_FETCH_BACKOFF_SECONDS = 0.8
+
 class HongguoPluginError(RuntimeError):
     pass
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
-
-
-def _as_list(value: Any) -> list:
-    if isinstance(value, (list, tuple)):
-        return list(value)
-    if isinstance(value, Mapping) or isinstance(value, (str, bytes)) or value is None:
-        return []
-    try:
-        return list(value)
-    except Exception:
-        pass
-    try:
-        return list(value.toArray())
-    except Exception:
-        pass
-    try:
-        size = value.size()
-        return [value.get(index) for index in range(size)]
-    except Exception:
-        pass
-    items = []
-    try:
-        index = 0
-        while True:
-            items.append(value[index])
-            index += 1
-    except Exception:
-        return items
-    return items
-
-
-def _first_item(value: Any) -> Any:
-    if isinstance(value, (list, tuple)):
-        return value[0] if value else value
-    items = _as_list(value)
-    if items:
-        return items[0]
-    return value
-
-
-def _video_meta(item: Any) -> dict:
-    meta = item.get("video_meta") if isinstance(item, Mapping) else None
-    if isinstance(meta, str):
-        try:
-            meta = json.loads(meta)
-        except Exception:
-            meta = {}
-    return meta if isinstance(meta, Mapping) else {}
 
 def _first(*values: Any) -> str:
     for value in values:
@@ -448,35 +955,69 @@ def _first(*values: Any) -> str:
                 value.get("play_addr"),
                 value.get("url_list"),
             )
-        elif _as_list(value):
-            result = _first(*_as_list(value))
         else:
             result = _text(value)
         if result:
             return result
     return ""
 
+def _json_response(response: requests.Response) -> Any:
+    response.raise_for_status()
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise HongguoPluginError("上游响应不是 JSON") from exc
+
+def _get_html(url: str, *, attempts: int = _HTML_FETCH_ATTEMPTS) -> str:
+    last_error: Exception | None = None
+    for attempt in range(max(1, attempts)):
+        try:
+            response = requests.get(
+                url,
+                headers={
+                    "User-Agent": UA,
+                    "Accept-Language": "zh-CN,zh;q=0.9",
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            response.encoding = response.encoding or "utf-8"
+            return response.text
+        except Exception as error:  # transient proxy/DNS/read failures
+            last_error = error
+            if attempt + 1 < max(1, attempts):
+                time.sleep(_HTML_FETCH_BACKOFF_SECONDS * (attempt + 1))
+    raise HongguoPluginError(f"fetch failed: {url}") from last_error
 
 def _router_data(html: str) -> dict[str, Any]:
     match = re.search(r"(?:window\.)?_ROUTER_DATA\s*=\s*", html)
     if not match:
-        raise HongguoPluginError("no router data on page")
+        raise HongguoPluginError("页面没有路由数据")
     try:
         value, _ = json.JSONDecoder().raw_decode(html[match.end() :])
     except json.JSONDecodeError as exc:
-        raise HongguoPluginError("router data parse failed") from exc
+        raise HongguoPluginError("页面路由数据解析失败") from exc
     if not isinstance(value, dict):
-        raise HongguoPluginError("router data format error")
+        raise HongguoPluginError("页面路由数据格式错误")
     return value
 
 def _media_url(item: Mapping[str, Any]) -> str:
-    return _first(
+    raw = _first(
         item.get("main_url"),
         item.get("backup_url"),
         item.get("backup_url_1"),
         item.get("play_addr"),
         item.get("url"),
     )
+    if raw and not raw.startswith("http"):
+        try:
+            decoded = _b64(raw)
+            text = decoded.decode("utf-8", "replace")
+            if text.startswith("http"):
+                return text
+        except Exception:
+            pass
+    return raw
 
 def _spade_value(item: Mapping[str, Any]) -> str:
     encrypt_info = item.get("encrypt_info")
@@ -487,12 +1028,12 @@ def _spade_value(item: Mapping[str, Any]) -> str:
 def derive_content_key(spade_b64: str) -> bytes:
     raw = _b64(spade_b64)
     if len(raw) < 3:
-        raise HongguoPluginError("spade_a too short")
+        raise HongguoPluginError("spade_a 太短")
     v8 = len(raw) - (raw[0] ^ raw[1] ^ raw[2]) + 47
     if v8 <= 0 or 1 + v8 > len(raw):
         v8 = len(raw) - 1
     if v8 < 33:
-        raise HongguoPluginError("spade_a length error")
+        raise HongguoPluginError("spade_a 长度异常")
     value = bytearray(raw[1 : 1 + v8])
     va, vb = 85, 246
     for index in range(v8):
@@ -505,8 +1046,7 @@ def derive_content_key(spade_b64: str) -> bytes:
     try:
         return binascii.unhexlify(bytes(value[1:33]).decode("ascii"))
     except (ValueError, binascii.Error) as exc:
-        raise HongguoPluginError("spade_a key material invalid") from exc
-
+        raise HongguoPluginError("spade_a 密钥材料无效") from exc
 
 def _find_box(data: memoryview, fourcc: bytes, start: int) -> tuple[int, int]:
     for index in range(max(4, start), len(data) - 4):
@@ -638,13 +1178,13 @@ def _replace_sinf(data: bytearray) -> None:
 
 def decrypt_mp4_cenc(data: bytes, content_key: bytes) -> bytes:
     if len(content_key) != 16:
-        raise HongguoPluginError("CENC key length error")
+        raise HongguoPluginError("CENC 密钥长度错误")
     result = bytearray(data)
     if len(result) < 16:
-        raise HongguoPluginError("MP4 data too short")
+        raise HongguoPluginError("MP4 数据过短")
     moov_start, moov_size = _find_box(memoryview(result), b"moov", 0)
     if moov_start < 0 or moov_size < 8:
-        raise HongguoPluginError("MP4 moov out of range")
+        raise HongguoPluginError("MP4 moov 越界")
     moov = memoryview(result)[moov_start : moov_start + moov_size]
     tracks: list[int] = []
     track_search = 0
@@ -673,9 +1213,9 @@ def decrypt_mp4_cenc(data: bytes, content_key: bytes) -> bytes:
                     break
                 size = sizes[sample_index]
                 if current + size > len(result):
-                    raise HongguoPluginError("MP4 sample out of range")
+                    raise HongguoPluginError("MP4 样本越界")
                 if sample_index >= len(aux_sizes):
-                    raise HongguoPluginError("MP4 aux info count short")
+                    raise HongguoPluginError("MP4 辅助信息数量不足")
                 entry_size = max(aux_sizes[sample_index], 8)
                 iv = bytes(aux[aux_index : aux_index + min(entry_size, 8)]).ljust(
                     8, b"\0"
@@ -688,12 +1228,10 @@ def decrypt_mp4_cenc(data: bytes, content_key: bytes) -> bytes:
                 aux_index += entry_size
                 decrypted_samples += 1
     if not decrypted_samples:
-        raise HongguoPluginError("MP4 has no decryptable CENC samples")
+        raise HongguoPluginError("MP4 没有可解密的 CENC 样本")
     moov_buffer = bytearray(result[moov_start : moov_start + moov_size])
     _restore_cenc_codecs(moov_buffer)
     _replace_sinf(moov_buffer)
-    _replace_box_type(moov_buffer, b"senc")
-    _replace_box_type(moov_buffer, b"pssh")
     result[moov_start : moov_start + moov_size] = moov_buffer
     return bytes(result)
 
@@ -726,18 +1264,6 @@ def _toplevel_boxes(buf: bytes) -> list[tuple[int, int, bytes]]:
     return boxes
 
 
-def _http_request(url, headers=None, data=None, timeout=60):
-    req = urllib.request.Request(url, headers=dict(headers or {}), data=data)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, dict(resp.headers), resp.read()
-    except urllib.error.HTTPError as err:
-        try:
-            return err.code, dict(err.headers), err.read()
-        except Exception:
-            return err.code, {}, b""
-
-
 def _range_get(url: str, start: int, end: int) -> tuple[bytes, int]:
     headers = dict(MEDIA_HEADERS)
     headers["Range"] = "bytes=%d-%d" % (start, end)
@@ -747,37 +1273,39 @@ def _range_get(url: str, start: int, end: int) -> tuple[bytes, int]:
         if attempt:
             time.sleep(_RANGE_FETCH_BACKOFF_SECONDS * attempt)
         try:
-            status, resp_headers, body = _http_request(url, headers=headers, timeout=60)
-        except Exception as error:
+            response = requests.get(url, headers=headers, timeout=60, proxies=_hg_proxies())
+        except requests.RequestException as error:
             last_error = error
             continue
-        if status not in (200, 206):
+        if response.status_code not in (200, 206):
             last_error = HongguoPluginError(
-                "media range request failed %s" % status
+                "媒体分片请求失败 %s" % response.status_code
             )
             continue
-        if not body or (status == 206 and len(body) < expected):
+        body = response.content
+        # 上游偶发返回短包；短于请求长度时重试，避免播放器收到截断数据。
+        if not body or (response.status_code == 206 and len(body) < expected):
             last_error = HongguoPluginError(
-                "media range body short %d/%d" % (len(body), expected)
+                "媒体分片长度不足 %d/%d" % (len(body), expected)
             )
             continue
         total = 0
-        content_range = resp_headers.get("Content-Range") or resp_headers.get("content-range") or ""
+        content_range = response.headers.get("Content-Range") or ""
         if "/" in content_range:
             tail = content_range.rsplit("/", 1)[1].strip()
             if tail.isdigit():
                 total = int(tail)
         if not total:
-            length = resp_headers.get("Content-Length") or resp_headers.get("content-length") or ""
+            length = response.headers.get("Content-Length") or ""
             total = int(length) if length.isdigit() else 0
         return body, total
-    raise last_error or HongguoPluginError("media range request failed")
+    raise last_error or HongguoPluginError("媒体分片请求失败")
 
 
 def _fetch_moov(url: str) -> tuple[int, int, bytes]:
     probe, total = _range_get(url, 0, _STREAM_HEAD_PROBE - 1)
     if not total:
-        raise HongguoPluginError("media total length unknown")
+        raise HongguoPluginError("媒体总长度未知")
     moov_start = 0
     moov_size = 0
     for offset, size, fourcc in _toplevel_boxes(probe):
@@ -786,18 +1314,19 @@ def _fetch_moov(url: str) -> tuple[int, int, bytes]:
             moov_size = size
             break
     if not moov_size:
-        raise HongguoPluginError("moov top-level box not found")
+        raise HongguoPluginError("未找到 moov 顶层盒")
     if moov_start + moov_size > total:
-        raise HongguoPluginError("moov out of range")
+        raise HongguoPluginError("moov 越界")
     if moov_start + moov_size <= len(probe):
         return total, moov_start, bytes(probe[moov_start : moov_start + moov_size])
     moov, _ = _range_get(url, moov_start, moov_start + moov_size - 1)
     if len(moov) != moov_size:
-        raise HongguoPluginError("moov range length mismatch")
+        raise HongguoPluginError("moov 分片长度不符")
     return total, moov_start, moov
 
 
 def _original_format_near(data: bytearray, entry_pos: int, default: bytes) -> bytes:
+    """从 sample entry 后的 sinf/frma 读取原始四字符码（avc1/hvc1/mp4a 等）。"""
     blob = bytes(data[entry_pos : min(len(data), entry_pos + 800)])
     idx = 0
     while True:
@@ -812,6 +1341,7 @@ def _original_format_near(data: bytearray, entry_pos: int, default: bytes) -> by
 
 
 def _restore_cenc_codecs(data: bytearray) -> None:
+    """把 encv/enca 还原为 frma 中的真实编码，避免一律改成 hvc1 导致只有声音。"""
     pos = 0
     while True:
         pos = data.find(b"encv", pos)
@@ -828,28 +1358,10 @@ def _restore_cenc_codecs(data: bytearray) -> None:
         pos += 4
 
 
-def _replace_box_type(data: bytearray, name: bytes) -> None:
-    position = 0
-    while True:
-        position = data.find(name, position)
-        if position < 0:
-            return
-        if position >= 4:
-            size = struct.unpack(">I", data[position - 4 : position])[0]
-            end = position - 4 + size
-            if 8 <= size and end <= len(data):
-                data[position : position + 4] = b"free"
-                position = end
-                continue
-        position += 4
-
-
 def _rewrite_moov(moov: bytes) -> bytes:
     result = bytearray(moov)
     _restore_cenc_codecs(result)
     _replace_sinf(result)
-    _replace_box_type(result, b"senc")
-    _replace_box_type(result, b"pssh")
     return bytes(result)
 
 
@@ -869,7 +1381,7 @@ def _sample_table(moov: bytes, moov_start: int) -> list[tuple[int, int, bytes]]:
         aux_length = sum(max(size, 8) for size in aux_sizes)
         aux_local = aux_offset - moov_start
         if aux_local < 0 or aux_local + aux_length > len(moov):
-            raise HongguoPluginError("CENC aux info outside moov, cannot stream decrypt")
+            raise HongguoPluginError("CENC 辅助信息不在 moov 内，无法流式解密")
         aux = moov[aux_local : aux_local + aux_length]
         sample_index = 0
         aux_index = 0
@@ -879,7 +1391,7 @@ def _sample_table(moov: bytes, moov_start: int) -> list[tuple[int, int, bytes]]:
                 if sample_index >= sample_count or sample_index >= len(sizes):
                     break
                 if sample_index >= len(aux_sizes):
-                    raise HongguoPluginError("CENC aux info count short")
+                    raise HongguoPluginError("CENC 辅助信息数量不足")
                 entry_size = max(aux_sizes[sample_index], 8)
                 initial_vector = bytes(
                     aux[aux_index : aux_index + min(entry_size, 8)]
@@ -889,12 +1401,13 @@ def _sample_table(moov: bytes, moov_start: int) -> list[tuple[int, int, bytes]]:
                 aux_index += entry_size
                 sample_index += 1
     if not samples:
-        raise HongguoPluginError("moov has no decryptable CENC samples")
+        raise HongguoPluginError("moov 中没有可解密的 CENC 样本")
     samples.sort()
     return samples
 
 
 class _StreamSession:
+    """按 Range 逐块拉取加密 MP4，边下边解 CENC，供本地播放器直连。"""
 
     def __init__(
         self,
@@ -905,7 +1418,7 @@ class _StreamSession:
         moov: bytes,
     ) -> None:
         if len(content_key) != 16:
-            raise HongguoPluginError("CENC key length error")
+            raise HongguoPluginError("CENC 密钥长度错误")
         self.url = url
         self.content_key = content_key
         self.total = total
@@ -953,7 +1466,7 @@ class _StreamSession:
     def read_range(self, start: int, end: int) -> bytes:
         raw, _ = _range_get(self.url, start, end)
         if not raw:
-            raise HongguoPluginError("media range body empty")
+            raise HongguoPluginError("媒体分片为空")
         buffer = bytearray(raw)
         self._patch(buffer, start)
         return bytes(buffer)
@@ -967,11 +1480,143 @@ class _StreamSession:
             cursor += len(block)
 
 
-def _stream_session(video_id: str, config: Mapping[str, Any], quality: str = "1080", route: str = "multi") -> "_StreamSession":
-    if quality != "auto":
-        quality = quality if quality in _QUALITY_LINE_NAME_TO_Q else "1080"
-    route = route if route in ("multi", "single", "raw") else "multi"
-    cache_key = "%s|%s|%s" % (video_id, quality, route)
+def _fresh_device_pair() -> tuple[str, str]:
+    return (
+        str(random.randint(10**17, 10**18 - 1)),
+        str(random.randint(10**17, 10**18 - 1)),
+    )
+
+
+def _is_empty_model_error(err: BaseException) -> bool:
+    text = str(err)
+    return (
+        "video_model 数据为空" in text
+        or "video_model 为空" in text
+        or "上游响应不是 JSON" in text
+        or "播放模型没有清晰度" in text
+        or "播放模型缺少地址或密钥材料" in text
+    )
+
+
+def _register_device_pair() -> dict[str, str] | None:
+    """2026-11 新版匿名设备注册：log5-applog-lf + gzip + AES-128-CBC（KDF sha512）。"""
+    try:
+        import uuid as _uuid
+        now = int(time.time() * 1000)
+        cdid = str(_uuid.uuid4())
+        header = {
+            "display_name": "红果免费短剧", "update_version_code": 74332,
+            "manifest_version_code": 74332, "app_version_minor": "7.4.3.32", "aid": 8662,
+            "channel": "update_64", "package": "com.phoenix.read", "app_version": "7.4.3.32",
+            "version_code": 74332, "sdk_version": "3.7.0-rc.34-fanqie-xiaoshuo",
+            "sdk_target_version": 29, "git_hash": "3a88f4e", "os": "Android", "os_version": "16",
+            "os_api": 36, "device_model": "25053RT47C", "device_brand": "Redmi",
+            "device_manufacturer": "Redmi", "cpu_abi": "arm64-v8a", "release_build": "b5e187f",
+            "density_dpi": 520, "display_density": "mdpi", "resolution": "1280x2772",
+            "language": "zh", "timezone": 8, "access": "wifi", "not_request_sender": 0,
+            "carrier": "CHINA MOBILE", "mcc_mnc": "46000", "rom": "eng.root.20231116.160340",
+            "rom_version": "W528JS release-keys", "cdid": cdid,
+            "sig_hash": "56a962410c494bbaf0b58dba20cae56f", "openudid": binascii.hexlify(os.urandom(8)).decode(),
+            "clientudid": str(_uuid.uuid4()), "ipv6_list": [], "region": "CN",
+            "tz_name": "Asia/Shanghai", "tz_offset": 28800, "sim_region": "cn",
+            "sim_serial_number": [], "oaid_may_support": False, "req_id": str(_uuid.uuid4()),
+            "device_platform": "android",
+            "custom": {"account_region_src": "fallback", "account_region": "cn",
+                       "host_bit": 64, "dragon_device_type": "phone"},
+            "pre_installed_channel": "", "apk_first_install_time": now, "is_system_app": 0,
+            "sdk_flavor": "china", "guest_mode": 0,
+        }
+        raw = json.dumps({"magic_tag": "ss_app_log", "header": header, "_gen_time": now},
+                         separators=(",", ":")).encode("utf-8")
+        compressed = gzip.compress(raw)
+        rnd = os.urandom(32)
+        derived = hashlib.sha512(hashlib.sha512(rnd).digest() + _HG_KDF_SALT).digest()
+        plaintext = hashlib.sha512(compressed).digest() + compressed
+        pad = 16 - (len(plaintext) % 16)
+        plaintext += bytes([pad]) * pad
+        data = b"\x74\x63\x05\x10\x00\x00" + rnd + _aes_cbc_encrypt(derived[:16], derived[16:32], plaintext)
+        headers = {
+            "User-Agent": _HG_PLAY_UA, "Accept": "application/json",
+            "Content-Type": "application/octet-stream;tt-data=a", "log-encode-type": "gzip",
+            "x-ss-dp": "8662", "x-ss-req-ticket": str(now),
+            "x-vc-bdturing-sdk-version": "4.0.3.cn", "lc": "101", "sdk-version": "2",
+            "passport-sdk-version": "5051452", "x-neptune": "-8|50:51:59:30:40:47:49:39",
+            "x-ss-stub": hashlib.md5(data).hexdigest().upper(),
+        }
+        resp = requests.post(_HG_REGISTER_URL, headers=headers, data=data,
+                             timeout=20, proxies=_hg_proxies())
+        if resp.status_code != 200:
+            return None
+        j = resp.json()
+        did = str(j.get("device_id_str") or j.get("device_id") or "")
+        iid = str(j.get("install_id_str") or j.get("install_id") or "")
+        if not did.isdigit() or did == "0" or not iid.isdigit() or iid == "0":
+            return None
+        return {"device_id": did, "install_id": iid, "cdid": cdid,
+                "cookie": "store-region=cn-bj; store-region-src=did; install_id=" + iid}
+    except Exception:
+        return None
+
+def _rotate_stream_device() -> dict[str, str]:
+    cached = _hg_device_pair_load()
+    if cached is not None:
+        pair = dict(cached)
+    else:
+        registered = _register_device_pair()
+        if registered is not None:
+            pair = registered
+            _hg_device_pair_save(registered)
+        else:
+            device_id, install_id = _fresh_device_pair()
+            pair = {"device_id": device_id, "install_id": install_id,
+                    "cdid": "%s-%s-4%s-%s-%s" % tuple(binascii.hexlify(os.urandom(n)).decode()
+                                                       for n in (4, 2, 3, 2, 6))}
+    with _STREAM_LOCK:
+        _STREAM_STATE["device"] = dict(pair)
+    return pair
+
+def _working_device_pair() -> dict[str, str] | None:
+    with _STREAM_LOCK:
+        pair = _STREAM_STATE.get("device")
+    if isinstance(pair, dict) and pair.get("device_id") and pair.get("install_id"):
+        out = {"device_id": str(pair["device_id"]), "install_id": str(pair["install_id"])}
+        if pair.get("cdid"):
+            out["cdid"] = str(pair["cdid"])
+        if pair.get("cookie"):
+            out["cookie"] = str(pair["cookie"])
+        return out
+    return None
+
+
+def _video_model_rotating(video_id: str, config: Mapping[str, Any]) -> dict[str, Any]:
+    last_err = None
+    current = dict(config) if isinstance(config, Mapping) else dict(config or {})
+    for attempt in range(4):
+        try:
+            return _video_model(video_id, current)
+        except Exception as err:
+            if not _is_empty_model_error(err):
+                raise
+            last_err = err
+        # 每次换全新注册设备（_rotate_stream_device 有缓存会返回相同设备）。
+        fresh = _register_device_pair()
+        if fresh is None:
+            fresh = _fresh_device_pair()
+        current = dict(fresh)
+        try:
+            if isinstance(config, dict):
+                config.clear()
+                config.update(fresh)
+        except Exception:
+            pass
+    if last_err is not None:
+        raise last_err
+    raise HongguoPluginError("video_model 数据为空")
+
+
+def _stream_session(video_id: str, config: Mapping[str, Any], quality: str = "1080") -> "_StreamSession":
+    quality = quality if quality in _QUALITY_LINE_NAME_TO_Q else "1080"
+    cache_key = "%s|%s" % (video_id, quality)
     with _STREAM_LOCK:
         sessions = _STREAM_STATE["sessions"]
         for key in [key for key, item in sessions.items() if item.expired()]:
@@ -979,8 +1624,8 @@ def _stream_session(video_id: str, config: Mapping[str, Any], quality: str = "10
         session = sessions.get(cache_key)
     if session is not None:
         return session
-
-
+    # 预热线程与播放器可能同时请求同一集；用 in-flight 事件去重，
+    # 避免重复拉 video_model 与 moov（冷启动 3~18s，重复会叠加首字节延迟）。
     with _STREAM_LOCK:
         inflight = _STREAM_STATE.setdefault("inflight", {})
         event = inflight.get(cache_key)
@@ -994,61 +1639,34 @@ def _stream_session(video_id: str, config: Mapping[str, Any], quality: str = "10
             session = _STREAM_STATE["sessions"].get(cache_key)
         if session is not None:
             return session
-    candidates = [route]
-    if route == "multi":
-        candidates.extend(["raw", "single"])
-    elif route == "single":
-        candidates.append("raw")
-    attempts_for = {"multi": 2, "single": 2, "raw": 1}
     last_err = None
     try:
-        for candidate in candidates:
-            for _attempt in range(attempts_for[candidate]):
+        # 上游偶发抖动（同一集首次 502、重试即通）——冷启动这里做短重试。
+        for _attempt in range(3):
+            try:
+                model = _video_model_rotating(video_id, config)
+                _, item = _select_quality(_video_list_from_model(model), quality)
+                url = _media_url(item)
+                spade = _spade_value(item)
+                if not url or not spade:
+                    raise HongguoPluginError("播放模型缺少地址或密钥材料")
+                total, moov_start, moov = _fetch_moov(url)
+                session = _StreamSession(url, derive_content_key(spade), total, moov_start, moov)
+                with _STREAM_LOCK:
+                    sessions = _STREAM_STATE["sessions"]
+                    while len(sessions) >= _STREAM_MAX_SESSIONS:
+                        sessions.pop(next(iter(sessions)), None)
+                    sessions[cache_key] = session
+                return session
+            except Exception as err:
+                last_err = err
                 try:
-                    if candidate == "single":
-                        model = _video_model_single(video_id, config)
-                    elif candidate == "raw":
-                        model = _video_model_raw(video_id)
-                    else:
-                        model = _video_model(video_id, config)
-                    if quality == "auto":
-                        _, item = _select_quality(_video_list_from_model(model), "2160", clarity_first=True)
-                    else:
-                        _, item = _select_quality(_video_list_from_model(model), quality)
-                    url = _media_url(item)
-                    spade = _spade_value(item)
-                    if not url or not spade:
-                        raise HongguoPluginError("video model missing url or key material")
-                    key_seed = _key_seed_from_model(model)
-                    if key_seed:
-                        try:
-                            url = _decrypt_spade_url(url, key_seed)
-                        except HongguoPluginError:
-                            pass
-                    if not url.startswith("http"):
-                        try:
-                            decoded = base64.b64decode(url).decode("utf-8", "replace")
-                            if decoded.startswith("http"):
-                                url = decoded
-                        except Exception:
-                            pass
-                    total, moov_start, moov = _fetch_moov(url)
-                    session = _StreamSession(url, derive_content_key(spade), total, moov_start, moov)
-                    with _STREAM_LOCK:
-                        sessions = _STREAM_STATE["sessions"]
-                        while len(sessions) >= _STREAM_MAX_SESSIONS:
-                            sessions.pop(next(iter(sessions)), None)
-                        sessions[cache_key] = session
-                    return session
-                except Exception as err:
-                    last_err = err
-                    try:
-                        time.sleep(0.4 * (_attempt + 1))
-                    except Exception:
-                        pass
+                    time.sleep(0.4 * (_attempt + 1))
+                except Exception:
+                    pass
         if last_err is not None:
             raise last_err
-        raise HongguoPluginError("media session create failed")
+        raise HongguoPluginError("媒体会话创建失败")
     finally:
         if leader:
             with _STREAM_LOCK:
@@ -1059,6 +1677,7 @@ def _stream_session(video_id: str, config: Mapping[str, Any], quality: str = "10
 _RANGE_UNSATISFIABLE = "unsatisfiable"
 
 def _parse_range(value: str, total: int) -> Any:
+    """解析 Range 头。返回 (start, end)、None（忽略）或 _RANGE_UNSATISFIABLE。"""
     text = (value or "").strip().lower()
     if not text.startswith("bytes="):
         return None
@@ -1099,7 +1718,6 @@ class _StreamHandler(BaseHTTPRequestHandler):
         return {
             "vid": video_id if video_id.isdigit() else "",
             "quality": (query.get("q") or ["1080"])[0],
-            "route": (query.get("route") or ["multi"])[0],
             "device_id": (query.get("did") or [""])[0],
             "install_id": (query.get("iid") or [""])[0],
         }
@@ -1115,55 +1733,14 @@ class _StreamHandler(BaseHTTPRequestHandler):
         except OSError:
             pass
 
-    def do_HEAD(self) -> None:
+    def do_HEAD(self) -> None:  # noqa: N802 - 标准库回调命名
         self._serve(body=False)
 
-    def do_GET(self) -> None:
+    def do_GET(self) -> None:  # noqa: N802 - 标准库回调命名
         self._serve(body=True)
 
     def _serve(self, body: bool) -> None:
         route = urlparse(self.path).path
-        if route == "/hg_audio.mp4":
-            query = parse_qs(urlparse(self.path).query)
-            book_id = (query.get("book") or [""])[0]
-            item_id = (query.get("item") or [""])[0]
-            tone_id = (query.get("tone") or [""])[0]
-            if not book_id or not item_id or not tone_id:
-                self._fail(400, b"missing audio params")
-                return
-            try:
-                data = _audio_session_bytes(book_id, item_id, tone_id, {"device_id": (query.get("did") or [""])[0], "install_id": (query.get("iid") or [""])[0]})
-            except Exception:
-                self._fail(502, b"audio session failed")
-                return
-            total = len(data)
-            raw_range = self.headers.get("Range") or ""
-            requested = _parse_range(raw_range, total) if raw_range else None
-            if requested is _RANGE_UNSATISFIABLE:
-                self.send_response(416)
-                self.send_header("Content-Type", "text/plain; charset=utf-8")
-                self.send_header("Content-Range", "bytes */%d" % total)
-                self.send_header("Content-Length", "0")
-                self.send_header("Connection", "close")
-                self.end_headers()
-                return
-            start, end = requested if requested else (0, total - 1)
-            self.send_response(206 if requested else 200)
-            self.send_header("Content-Type", "audio/mp4")
-            self.send_header("Accept-Ranges", "bytes")
-            self.send_header("Content-Length", str(end - start + 1))
-            if requested:
-                self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, total))
-            self.end_headers()
-            if not body:
-                return
-            try:
-                self.wfile.write(data[start:end + 1])
-            except (BrokenPipeError, ConnectionResetError):
-                self.close_connection = True
-            except Exception:
-                self.close_connection = True
-            return
         if not route.endswith(".mp4"):
             self._fail(404, b"not found")
             return
@@ -1172,16 +1749,27 @@ class _StreamHandler(BaseHTTPRequestHandler):
             self._fail(400, b"missing vid")
             return
         try:
+            with _STREAM_LOCK:
+                state_dev = dict(_STREAM_STATE.get("device") or {})
+            full_config = {
+                "device_id": params["device_id"] or state_dev.get("device_id", ""),
+                "install_id": params["install_id"] or state_dev.get("install_id", ""),
+                "cdid": state_dev.get("cdid", ""),
+                "cookie": state_dev.get("cookie", ""),
+            }
             session = _stream_session(
                 params["vid"],
-                {
-                    "device_id": params["device_id"],
-                    "install_id": params["install_id"],
-                },
+                full_config,
                 params["quality"],
-                params["route"],
             )
-        except Exception:
+        except Exception as exc:
+            try:
+                import traceback as _tb
+                with open("/tmp/hg_serve_err.txt", "a") as _f:
+                    _f.write("=== serve error ===\n")
+                    _tb.print_exc(file=_f)
+            except Exception:
+                pass
             self._fail(502, b"media session failed")
             return
         raw_range = self.headers.get("Range") or ""
@@ -1230,15 +1818,6 @@ def _start_stream_server() -> int:
             _STREAM_STATE["port"] = port
             _STREAM_STATE["server"] = server
             return port
-        try:
-            server = ThreadingHTTPServer(("127.0.0.1", 0), _StreamHandler)
-        except OSError:
-            return 0
-        server.daemon_threads = True
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        _STREAM_STATE["port"] = int(server.server_address[1])
-        _STREAM_STATE["server"] = server
-        return int(server.server_address[1])
     return 0
 
 def _b64(value: str) -> bytes:
@@ -1253,7 +1832,6 @@ def _branch_one_bytes() -> bytes:
     if not hasattr(_branch_one_bytes, "value"):
         _branch_one_bytes.value = lzma.decompress(base64.b85decode(_BRANCH_ONE_B85))
     return _branch_one_bytes.value
-
 
 _BRANCH_ONE_B85 = (
     '{Wp48S^xk9=GL@E0stWa761SMbT8$j;R-wN{#^houf7QIIVU7<Ew*6C3?&vQR7`VixMIZH9HyzSRN)dgt5HsOFl)*@6hSxGmq5aA'
@@ -2082,7 +2660,6 @@ _BRANCH_ONE_B85 = (
     '_lN0;xhM^(00FCl1dxCQVU;jKvBYQl0ssI200dcD'
 )
 
-
 class SM3:
     def __init__(self, data=b""):
         if isinstance(data, str):
@@ -2093,7 +2670,7 @@ class SM3:
         self._data.extend(data)
 
     def digest(self):
-
+        # Chaquopy/FongMi 环境未必带 cryptography；保留纯 Python SM3 回退。
         if hashes is not None and hasattr(hashes, "SM3"):
             digest = hashes.Hash(hashes.SM3())
             digest.update(bytes(self._data))
@@ -2365,6 +2942,7 @@ class AES_V3():
         for i in range(31):
             kk = key[i]
             idx = i * 8
+            # print(k, data[idx + 1], (data[idx + 1] & -65) | (k & 64))
             data[idx + 0] = (data[idx + 0] & -33) | ((kk << 4) & 0xff & 32)
             data[idx + 1] = (data[idx + 1] & -65) | (kk & 64)
             data[idx + 2] = (data[idx + 2] & -5) | ((kk * 4) & 4)
@@ -2388,17 +2966,22 @@ class AES_V3():
 
         key = b''.join(blocks)
         # key = bytes.fromhex('a22c23b05bb4a831d31bbdbd1327c5f84991bca3e7d8df24e52f58b7ac61f2e0')
+        # print("sign_key", key.hex())
         data = self.mix_columns(data, key)
         return key[-1:] + data
 
     def encrypt_block(self, plaintext):
+        # print("b000", plaintext.hex())
         plain_state = bytes2matrix(plaintext)
 
         add_round_key_con(plain_state, self._key_matrices[0:4], self.con2)
+        # print("b001", matrix2bytes(plain_state).hex())
 
         for i in range(1, 3):
             self.sub_bytes(plain_state)
+            # print("b003", matrix2bytes(plain_state).hex())
             self.shift_rows(plain_state)
+            # print("b004", matrix2bytes(plain_state).hex())
             if i == 1:
                 self.shift_rows_con(plain_state, self.con2)
                 mix_columns(plain_state)
@@ -2422,6 +3005,7 @@ class AES_V3():
             previous = ciphertext_block
 
         key = b''.join(blocks)
+        # print("sign_key", key.hex())
         data = self.mix_columns(data, key)
         return data
 
@@ -2429,17 +3013,22 @@ class AES_V3():
         assert len(ciphertext) == 16
         cipher_state = bytes2matrix(ciphertext)
 
+        # print("b000", matrix2bytes(cipher_state).hex())
         add_round_key(cipher_state, self._key_matrices[4:])
+        #         print("b001", matrix2bytes(cipher_state).hex())
 
         for i in range(2, 0, -1):
             add_round_key_con(cipher_state, self._key_matrices[i * 4:], self.con2)
+            #             print("b002", i, matrix2bytes(cipher_state).hex())
 
             if i == 1:
                 inv_mix_columns(cipher_state)
                 self.shift_rows_con(cipher_state, self.con)
 
             self.inv_shift_rows(cipher_state)
+            #             print("b004", i, matrix2bytes(cipher_state).hex())
             self.inv_sub_bytes(cipher_state)
+        #             print("b005", i, matrix2bytes(cipher_state).hex())
 
         add_round_key_con(cipher_state, self._key_matrices[0:4], self.con2)
 
@@ -2983,8 +3572,8 @@ def _varint(value: int) -> bytes:
     return bytes(result)
 
 def _sint(value: int, bits: int) -> int:
-
-
+    # 正式 protobuf 编码规则：正数不先截断到有符号范围；
+    # 这对 Medusa.rand 等可能大于 2**31 的 sint32 字段很重要。
     value = int(value)
     return (value << 1) if value >= 0 else (value << 1) ^ (~0)
 
@@ -3118,7 +3707,7 @@ def _xg_rc4(data: bytes, key: bytes) -> bytearray:
         x = table[i]
         j = (j + x) & 0xFF
         y = table[j]
-
+        # 保持正式基线的 RC4 变体：这里只覆盖 S[i]，不交换 S[j]。
         table[i] = y
         result[index] = value ^ table[(y + y) & 0xFF]
     return result
@@ -3190,7 +3779,7 @@ def _gen_medusa_proto(url: str, url_params: Mapping[str, Any], devices: Mapping[
     proto_rand = random.randint(0, 0xFFFFFFFF)
     launch_time = random.randint(100, 120)
     process_id = random.randint(10001, 12000)
-
+    # 这些字段是正式签名实现中的固定环境采样值，不是用户设备标识。
     report_ts = 1728388016635
     report_time = int(time.time())
     device = {
@@ -3304,12 +3893,11 @@ def _core_sixgod(url: str, params: Mapping[str, Any], devices: Mapping[str, Any]
     result_headers["x-tt-dt"] = str(devices.get("x_tt_dt", ""))
     return result_headers, encrypted_url
 
-
 def _device_config(config: Mapping[str, Any]) -> dict[str, str]:
     device_id = _text(config.get("device_id"))
     install_id = _text(config.get("install_id"))
     if not device_id or not install_id:
-        raise HongguoPluginError("missing device_id/install_id config")
+        raise HongguoPluginError("缺少红果 device_id/install_id 配置")
     return {
         "device_id": device_id, "iid": install_id, "install_id": install_id,
         "device_brand": "Redmi", "device_model": "25053RT47C", "device_type": "25053RT47C",
@@ -3321,298 +3909,54 @@ def _device_config(config: Mapping[str, Any]) -> dict[str, str]:
     }
 
 def _video_model(video_id: str, config: Mapping[str, Any]) -> dict[str, Any]:
-    devices = _device_config(config)
-    params = {
-        "iid": devices["install_id"],
-        "device_id": devices["device_id"],
-        "ac": "wifi",
-        "channel": "update_64",
-        "aid": "8662",
-        "app_name": "novelread",
-        "version_code": "71332",
-        "version_name": "7.1.3.32",
-        "device_platform": "android",
-        "os": "android",
-        "ssmix": "a",
-        "device_type": "25053RT47C",
-        "device_brand": "Redmi",
-        "language": "zh",
-        "os_api": "36",
-        "os_version": "16",
-        "manifest_version_code": "71332",
-        "resolution": "1280*2772",
-        "dpi": "520",
-        "update_version_code": "71332",
-        "host_abi": "arm64-v8a",
-        "dragon_device_type": "phone",
-        "pv_player": "71332",
-        "compliance_status": "0",
-        "need_personal_recommend": "1",
-        "player_so_load": "1",
-        "is_android_pad_screen": "0",
-    }
-    payload = {
-        "biz_param": {
-            "detail_page_version": 0,
-            "device_level": 3,
-            "disable_digg_stat": False,
-            "need_all_video_definition": True,
-            "need_mp4_align": False,
-            "use_os_player": False,
-            "use_server_dns": False,
-            "video_platform": 1024,
-        },
-        "mixed_video_id_map": {"1004": [video_id]},
-    }
-    request_headers = {
-        "User-Agent": APP_UA,
-        "Accept": "application/json; charset=utf-8,application/x-protobuf",
-        "Content-Type": "application/json; charset=UTF-8",
-        "x-xs-from-web": "0",
-        "x-ss-req-ticket": str(int(time.time() * 1000)),
-        "x-tt-request-tag": "t=0;n=0",
-        "sdk-version": "2",
-        "passport-sdk-version": "50561",
-        "x-vc-bdturing-sdk-version": "3.7.2.cn",
-    }
-    if devices.get("cookie"):
-        request_headers["Cookie"] = devices["cookie"]
-    signed_headers, signed_url = _core_sixgod(
-        VIDEO_URL,
-        params,
-        devices,
-        payload,
-        request_headers,
-    )
-    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    status, _resp_headers, raw = _http_request(
-        signed_url, headers=signed_headers, data=body, timeout=30
-    )
-    if status >= 400:
-        raise HongguoPluginError("video_model http %s" % status)
+    """2026-11：走番茄短剧通道 api3-normal-sinfonlinea + argus/ladon 签名。"""
+    device_id = _text(config.get("device_id"))
+    install_id = _text(config.get("install_id"))
+    if not device_id or not install_id:
+        raise HongguoPluginError("缺少红果 device_id/install_id 配置")
+    cdid = _text(config.get("cdid")) or str(uuid.uuid4())
+    cookie = _text(config.get("cookie")) or ("store-region=cn-bj; store-region-src=did; install_id=" + install_id)
+    query = urlencode({
+        "iid": install_id, "device_id": device_id, "aid": "1967", "app_name": "novelapp",
+        "version_code": "72132", "version_name": "7.2.1.32", "device_platform": "android",
+        "device_brand": "Xiaomi", "os_version": "13", "cdid": cdid,
+    }, quote_via=quote)
+    payload = json.dumps({
+        "video_id": str(video_id), "content_type": 1004,
+        "biz_param": {"detail_page_version": 0, "device_level": 3, "disable_digg_stat": False,
+                      "disable_video_relate_book": False, "from_video_id": "",
+                      "need_all_video_definition": True, "need_mp4_align": False, "source": 4,
+                      "use_os_player": False, "use_server_dns": False, "video_platform": 3},
+    }, separators=(",", ":")).encode("utf-8")
+    ts = int(time.time())
+    headers = {"User-Agent": _HG_SHORT_UA, "Content-Type": "application/json; charset=utf-8",
+               "Cookie": cookie}
+    headers.update(_hg_sign_headers(query, payload, ts, 1967))
+    response = requests.post(_HG_SHORT_API + "?" + query, headers=headers, data=payload,
+                             timeout=30, proxies=_hg_proxies())
+    if response.status_code != 200:
+        raise HongguoPluginError("video_model http %s" % response.status_code)
+    if not response.text:
+        raise HongguoPluginError("video_model 数据为空")
     try:
-        response_data = json.loads(raw.decode("utf-8", "replace"))
+        response_data = response.json()
     except ValueError as exc:
-        raise HongguoPluginError("video_model response not JSON") from exc
+        raise HongguoPluginError("上游响应不是 JSON") from exc
+    if str(response_data.get("code") or 0) != "0":
+        raise HongguoPluginError("video_model 数据为空")
     data = response_data.get("data") or {}
     if not isinstance(data, Mapping):
-        raise HongguoPluginError("video_model data empty")
-    entry: Any = data.get(video_id)
-    if entry is None:
-        for value in data.values():
-            if isinstance(value, Mapping):
-                entry = value
-                break
-            if isinstance(value, list) and value and isinstance(value[0], Mapping):
-                entry = value[0]
-                break
-    if not isinstance(entry, Mapping):
-        entry = data
-    raw_model = entry.get("video_model") if isinstance(entry, Mapping) else None
-    if raw_model is None:
-        raw_model = data.get("video_model")
+        raise HongguoPluginError("video_model 数据为空")
+    raw_model = data.get("video_model")
     if isinstance(raw_model, str):
         try:
             raw_model = json.loads(raw_model)
         except ValueError as exc:
-            raise HongguoPluginError("video_model JSON invalid") from exc
+            raise HongguoPluginError("video_model JSON 无效") from exc
     if not isinstance(raw_model, Mapping):
-        raise HongguoPluginError("video_model empty")
+        raise HongguoPluginError("video_model 为空")
     return dict(raw_model)
 
-
-_HG_APP_UA_74332 = "com.phoenix.read/74332 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3)"
-_HG_APP_UA_71332 = "com.phoenix.read/71332 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3)"
-_HG_RAW_HOSTS = ("api5-normal-sinfonlineb.fqnovel.com", "api5-normal-lq.fqnovel.com", "api5-normal-sinfonlinea.fqnovel.com", "api5-normal-hl.fqnovel.com", "api5-normal-lf.fqnovel.com", "api5-normal-sinfonlinec.fqnovel.com")
-
-def _params_74332(devices, extra=None):
-    params = {
-        "iid": devices.get("iid") or devices.get("install_id") or "",
-        "device_id": devices.get("device_id") or "",
-        "ac": "wifi", "channel": "update_64", "aid": "8662",
-        "app_name": "novelread", "version_code": "74332", "version_name": "7.4.3.32",
-        "device_platform": "android", "os": "android", "ssmix": "a",
-        "device_type": "25053RT47C", "device_brand": "Redmi", "language": "zh",
-        "os_api": "36", "os_version": "16", "manifest_version_code": "74332",
-        "resolution": "1280*2772", "dpi": "520", "update_version_code": "74332",
-        "host_abi": "arm64-v8a", "dragon_device_type": "phone", "pv_player": "74332",
-        "compliance_status": "0", "need_personal_recommend": "1", "player_so_load": "1",
-        "is_android_pad_screen": "0",
-    }
-    if extra:
-        params.update(extra)
-    return params
-
-def _signed_json_get(base, devices, extra=None):
-    params = _params_74332(devices, extra)
-    headers = {"User-Agent": _HG_APP_UA_74332, "Accept": "application/json; charset=utf-8"}
-    signed_headers, signed_url = _core_sixgod(base, params, devices, None, headers)
-    status, _, raw = _http_request(signed_url, headers=signed_headers, timeout=30)
-    if status >= 400:
-        raise HongguoPluginError("signed get http %s" % status)
-    data = json.loads(raw.decode("utf-8", "replace"))
-    code = data.get("code", data.get("Code", 0)) if isinstance(data, dict) else 0
-    if code not in (0, "0"):
-        raise HongguoPluginError("signed get code %s" % code)
-    return data
-
-def _app_video_card(vd):
-    if not isinstance(vd, dict):
-        return None
-    sid = _text(vd.get("series_id") or vd.get("book_id"))
-    if not sid:
-        return None
-    title = _text(vd.get("title") or vd.get("series_title") or vd.get("book_name"))
-    cover = _text(vd.get("cover") or vd.get("series_cover") or vd.get("cover_url"))
-    desc = _text(vd.get("video_desc") or vd.get("series_intro") or vd.get("abstract"))
-    ep = vd.get("episode_cnt") or vd.get("episode_count")
-    if ep is None:
-        raw_ep = vd.get("episode")
-        ep = raw_ep if isinstance(raw_ep, int) or (isinstance(raw_ep, str) and raw_ep.isdigit()) else None
-    remark = ("%s集" % ep) if ep else ""
-    return {"vod_id": sid, "vod_name": title, "vod_pic": cover, "vod_content": desc, "vod_remarks": remark, "vod_year": "", "vod_area": "", "vod_actor": "", "vod_director": ""}
-
-def _collect_video_cards(node, out, seen):
-    if isinstance(node, dict):
-        vd = node.get("video_data")
-        if isinstance(vd, list):
-            for item in vd:
-                card = _app_video_card(item)
-                if card and card["vod_id"] not in seen:
-                    seen.add(card["vod_id"])
-                    out.append(card)
-        for value in node.values():
-            _collect_video_cards(value, out, seen)
-    elif isinstance(node, list):
-        for value in node:
-            _collect_video_cards(value, out, seen)
-
-def _multi_detail_author(sid, devices):
-    data = _signed_json_get("https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/multi-detail/v", devices, {"book_id": str(sid), "book_type": "2"})
-    rows = data.get("data") or []
-    if rows and isinstance(rows[0], dict):
-        return _text(rows[0].get("author") or rows[0].get("source"))
-    return ""
-
-def _plan_related_cards(sid, devices):
-    data = _signed_json_get("https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/plan/v", devices, {"scene": "10", "from": "detail_page_more_related", "book_id": str(sid), "new_search_middle_page": "false", "bookstore_tab_type": "0", "query_history_removed": "false", "user_is_login": "0", "bookstore_tab": "0", "search_middle_page_version": "0", "pad_column_detail": "0", "hot_word_exchange": "false", "device_level": "3", "limit": "0", "offset": "0", "is_horizontal_screen": "false", "reader_single_col_from_ip_strategy": "false"})
-    out = []
-    seen = set()
-    _collect_video_cards(data.get("data"), out, seen)
-    return [c for c in out if c["vod_id"] != str(sid)]
-
-def _bookmall_cards(devices):
-    data = _signed_json_get("https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/bookmall/tab/v", devices)
-    tabs = (data.get("data") or {}).get("tab_item") or []
-    target = None
-    for tab in tabs:
-        if isinstance(tab, dict) and tab.get("title") == "找剧":
-            target = tab
-            break
-    if target is None and tabs:
-        target = tabs[0]
-    out = []
-    seen = set()
-    if target is not None:
-        _collect_video_cards(target, out, seen)
-    return out
-
-def _app_search_cards(key, page, devices):
-    out = []
-    seen = set()
-    offset = (max(1, int(page or 1)) - 1) * 20
-    for tab_type in ("1", "2", "3"):
-        try:
-            data = _signed_json_get("https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/search/tab/v", devices, {"query": str(key), "count": "20", "offset": str(offset), "tab_type": tab_type, "bookshelf_search_plan": "4", "use_correct": "true", "user_is_login": "0"})
-        except Exception:
-            continue
-        for tab in (data.get("search_tabs") or []):
-            if not isinstance(tab, dict) or int(tab.get("tab_type") or 0) != int(tab_type):
-                continue
-            for cell in (tab.get("data") or []):
-                if not isinstance(cell, dict):
-                    continue
-                books = cell.get("book_data") or []
-                if not isinstance(books, list) or not books or not isinstance(books[0], dict):
-                    continue
-                book = books[0]
-                sid = _text(book.get("book_id"))
-                if not sid or sid in seen:
-                    continue
-                seen.add(sid)
-                cover = ""
-                for key_name in ("cover", "cover_url", "thumb_url", "thumb_uri", "pic", "image"):
-                    cover = _text(book.get(key_name))
-                    if cover:
-                        break
-                out.append({"vod_id": sid, "vod_name": _text(book.get("book_name")), "vod_pic": cover, "vod_content": _text(book.get("abstract")), "vod_remarks": "", "vod_year": "", "vod_area": "", "vod_actor": _text(book.get("author")), "vod_director": ""})
-    return out
-
-def _extract_model(response_data, video_id):
-    data = response_data.get("data") or {}
-    if not isinstance(data, Mapping):
-        raise HongguoPluginError("video model data empty")
-    entry = data.get(video_id)
-    if entry is None:
-        for value in data.values():
-            if isinstance(value, Mapping):
-                entry = value
-                break
-            if isinstance(value, list) and value and isinstance(value[0], Mapping):
-                entry = value[0]
-                break
-    if not isinstance(entry, Mapping):
-        entry = data
-    raw_model = entry.get("video_model") if isinstance(entry, Mapping) else None
-    if raw_model is None:
-        raw_model = data.get("video_model")
-    if isinstance(raw_model, str):
-        try:
-            raw_model = json.loads(raw_model)
-        except ValueError as exc:
-            raise HongguoPluginError("video model JSON invalid") from exc
-    if not isinstance(raw_model, Mapping):
-        raise HongguoPluginError("video model empty")
-    return dict(raw_model)
-
-def _video_model_single(video_id, config):
-    devices = _device_config(config)
-    params = _params_74332(devices)
-    for key_name, value in (("version_code", "71332"), ("version_name", "7.1.3.32"), ("manifest_version_code", "71332"), ("update_version_code", "71332"), ("pv_player", "71332")):
-        params[key_name] = value
-    payload = {"video_id": str(video_id), "biz_param": {"detail_page_version": 0, "device_level": 3, "disable_digg_stat": False, "need_all_video_definition": True, "need_mp4_align": False, "use_os_player": False, "use_server_dns": False, "video_platform": 1024}}
-    headers = {"User-Agent": _HG_APP_UA_71332, "Accept": "application/json; charset=utf-8", "Content-Type": "application/json; charset=UTF-8", "x-xs-from-web": "0", "x-ss-req-ticket": str(int(time.time() * 1000)), "x-tt-request-tag": "t=0;n=0", "sdk-version": "2", "passport-sdk-version": "50561"}
-    signed_headers, signed_url = _core_sixgod("https://api5-normal-sinfonlineb.fqnovel.com/novel/player/video_model/v1/", params, devices, payload, headers)
-    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    status, _, raw = _http_request(signed_url, headers=signed_headers, data=body, timeout=30)
-    if status >= 400:
-        raise HongguoPluginError("video_model single http %s" % status)
-    response_data = json.loads(raw.decode("utf-8", "replace"))
-    return _extract_model(response_data, str(video_id))
-
-def _video_model_raw(video_id):
-    payload = {"biz_param": {"detail_page_version": 0, "device_level": 4, "disable_digg_stat": False, "need_all_video_definition": True, "need_mp4_align": False, "use_os_player": False, "use_server_dns": False, "video_platform": 1024}, "mixed_video_id_map": {"1004": [str(video_id)]}}
-    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    last_err = None
-    for host in _HG_RAW_HOSTS:
-        try:
-            device_id = random.randint(10 ** 17, 10 ** 18 - 1)
-            url = "https://%s/novel/player/multi_video_model/v1/?aid=8662&device_id=%d" % (host, device_id)
-            status, _, raw = _http_request(url, headers={"Content-Type": "application/json", "User-Agent": _HG_APP_UA_71332}, data=body, timeout=10)
-            if status != 200:
-                continue
-            response_data = json.loads(raw.decode("utf-8", "replace"))
-            if response_data.get("code") not in (0, "0"):
-                continue
-            model = _extract_model(response_data, str(video_id))
-            if _video_list_from_model(model) is not None:
-                return model
-        except Exception as err:
-            last_err = err
-            continue
-    if last_err is not None:
-        raise last_err
-    raise HongguoPluginError("raw video model empty")
 
 def _video_list_from_model(model: Mapping[str, Any]) -> Any:
     for key in ("video_list", "dynamic_video_list"):
@@ -3645,40 +3989,15 @@ def _quality(value: Any) -> str:
     match = re.search(r"(2160|1440|1080|720|576|540|480|360)", text)
     return match.group(1) if match else "1080"
 
-_STANDARD_CODECS = ("bytevc1", "avc1", "avc", "h264", "hvc1", "hev1", "hevc")
-
-
-def _codec_rank(item: Mapping[str, Any]) -> int:
-    codec = _text(
-        item.get("codec_type")
-        or _video_meta(item).get("codec_type")
-        or item.get("codec")
-        or _video_meta(item).get("codec")
-    ).lower()
-    if codec in _STANDARD_CODECS:
-        return 0
-    return 1
-
-
-def _plain_rank(item: Mapping[str, Any]) -> int:
-    if _spade_value(item):
-        return 1
-    encrypt_info = item.get("encrypt_info")
-    if isinstance(encrypt_info, Mapping) and encrypt_info:
-        return 1
-    return 0
-
-
-def _select_quality(video_list: Any, wanted: str = "1080", clarity_first: bool = False) -> tuple[str, dict[str, Any]]:
+def _select_quality(video_list: Any, wanted: str = "1080") -> tuple[str, dict[str, Any]]:
     def rows_from(value: Any, hinted_quality: str = "") -> list[tuple[str, dict[str, Any]]]:
-        if not isinstance(value, Mapping):
-            items = _as_list(value)
-            if not items:
-                return []
+        if isinstance(value, list):
             result: list[tuple[str, dict[str, Any]]] = []
-            for item in items:
+            for item in value:
                 result.extend(rows_from(item, hinted_quality))
             return result
+        if not isinstance(value, Mapping):
+            return []
         if any(
             key in value
             for key in (
@@ -3699,48 +4018,29 @@ def _select_quality(video_list: Any, wanted: str = "1080", clarity_first: bool =
             if key in {"video_list", "dynamic_video_list", "list"}:
                 result.extend(rows_from(item, _quality(key)))
                 continue
-            if isinstance(item, Mapping) or _as_list(item):
+            if isinstance(item, (Mapping, list)):
                 result.extend(rows_from(item, _quality(key)))
         return result
 
     candidates = rows_from(video_list)
-    best: dict[str, dict[str, Any]] = {}
+    rows: dict[str, dict[str, Any]] = {}
     for hinted_quality, item in candidates:
         definition = _quality(
             item.get("definition")
             or item.get("vheight")
-            or _video_meta(item).get("definition")
+            or (item.get("video_meta") or {}).get("definition")
             or hinted_quality
         )
-        rank = (_codec_rank(item), _plain_rank(item))
-        if definition not in best or rank < (_codec_rank(best[definition]), _plain_rank(best[definition])):
-            best[definition] = item
-    if not best:
-        raise HongguoPluginError("video model has no quality")
+        rows[definition] = item
+    if not rows:
+        raise HongguoPluginError("播放模型没有清晰度")
     requested = _quality(wanted)
     order = [requested] + [item for item in _QUALITY_ORDER if item != requested]
-
-    def clarity_rank(definition: str) -> int:
-        if definition in order:
-            return order.index(definition)
-        return len(order)
-
-    if clarity_first:
-        sort_key = lambda item: (
-            clarity_rank(item),
-            _codec_rank(best[item]),
-            _plain_rank(best[item]),
-            -_int(item),
-        )
-    else:
-        sort_key = lambda item: (
-            _codec_rank(best[item]),
-            _plain_rank(best[item]),
-            clarity_rank(item),
-            -_int(item),
-        )
-    definition = min(best, key=sort_key)
-    return definition, best[definition]
+    for definition in order:
+        if definition in rows:
+            return definition, rows[definition]
+    definition = max(rows, key=lambda item: _int(item))
+    return definition, rows[definition]
 
 def _fallback_api_value(value: Any) -> str:
     if isinstance(value, Mapping):
@@ -3769,10 +4069,10 @@ def _fallback_api_value(value: Any) -> str:
 def _decrypt_spade_url(value: str, key_seed: bytes) -> str:
     raw = _b64(value)
     if len(raw) < 20 or raw[0] != 0xA8 or raw[2:4] != b"\x01\x00":
-        raise HongguoPluginError("spade URL header invalid")
+        raise HongguoPluginError("spade URL 头无效")
     cipher_data = raw[4 : len(raw) - (len(raw) - 4) % 16]
     if not cipher_data:
-        raise HongguoPluginError("spade URL cipher empty")
+        raise HongguoPluginError("spade URL 密文为空")
     constants = bytes.fromhex(
         "4dd4c2e6b83162090e52b3c7a6733ba4"
         "1cb2462b829ab58a196b39db57177524"
@@ -3788,6 +4088,13 @@ def _decrypt_spade_url(value: str, key_seed: bytes) -> str:
             plaintext = plaintext[:-padding]
     return plaintext.rstrip(b"\0").decode("utf-8", errors="replace")
 
+def _parse_ref(value: str, prefix: str) -> str:
+    if not value.startswith(prefix):
+        raise HongguoPluginError("播放引用无效")
+    raw = value[len(prefix) :]
+    if not raw or not _VIDEO_ID.fullmatch(raw):
+        raise HongguoPluginError("播放引用格式无效")
+    return raw
 
 def _key_seed_from_model(model: Mapping[str, Any]) -> bytes:
     value = _text(model.get("key_seed"))
@@ -3800,13 +4107,11 @@ def _key_seed_from_model(model: Mapping[str, Any]) -> bytes:
             if result:
                 return result
     return b""
-
-
-def _fetch_text(url, timeout=30):
+def _page(url):
     last_err = None
-    for attempt in range(max(1, _HTML_FETCH_ATTEMPTS)):
+    for attempt in range(3):
         try:
-            req = urllib.request.Request(
+            r = requests.get(
                 url,
                 headers={
                     "User-Agent": UA,
@@ -3814,778 +4119,323 @@ def _fetch_text(url, timeout=30):
                     "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
                     "Cache-Control": "no-cache",
                 },
+                timeout=30,
             )
-            try:
-                with urllib.request.urlopen(req, timeout=timeout) as resp:
-                    raw = resp.read()
-            except Exception as read_err:
-                partial = getattr(read_err, "partial", b"")
-                if partial:
-                    text = partial.decode("utf-8", "replace")
-                    if "_ROUTER_DATA" in text:
-                        try:
-                            _router_data(text)
-                            return text
-                        except Exception:
-                            pass
-                raise
-            text = raw.decode("utf-8", "replace")
-            if not text or "_ROUTER_DATA" not in text:
-                raise HongguoPluginError("empty or invalid page")
-            return text
+            r.raise_for_status()
+            r.encoding = r.encoding or "utf-8"
+            if not r.text or "_ROUTER_DATA" not in r.text:
+                raise RuntimeError("empty or invalid page")
+            return r.text
         except Exception as err:
             last_err = err
-            if attempt + 1 < max(1, _HTML_FETCH_ATTEMPTS):
-                time.sleep(_HTML_FETCH_BACKOFF_SECONDS * (attempt + 1))
-    raise HongguoPluginError("page fetch failed: %s" % last_err)
+            try:
+                time.sleep(0.6 * (attempt + 1))
+            except Exception:
+                pass
+    raise RuntimeError("page fetch failed: %s" % last_err)
 
+def _data(url):
+    html = _page(url)
+    m = re.search(r"(?:window\.)?_ROUTER_DATA\s*=\s*", html)
+    if not m:
+        return {}
+    try:
+        return json.JSONDecoder().raw_decode(html[m.end():])[0]
+    except (ValueError, TypeError):
+        return {}
 
-def _router(url):
-    html = _fetch_text(url)
-    return _router_data(html)
-
-
-def _card(row):
-    row = row or {}
-    vd = row.get("video_data") if isinstance(row.get("video_data"), dict) else row
-    sid = str(vd.get("series_id") or row.get("series_id") or "")
-    name = str(vd.get("series_title") or vd.get("series_name") or row.get("series_name") or row.get("name") or "未命名")
-    pic = str(vd.get("series_cover") or row.get("series_cover") or "")
-    intro = str(vd.get("series_intro") or row.get("series_intro") or "")
-    remarks = str(vd.get("episode_right_text") or row.get("episode_right_text") or "")
-    if not remarks:
-        count = vd.get("episode_cnt") or row.get("episode_cnt") or 0
-        if count:
-            remarks = "全%s集" % count
+def _item(x):
+    x = x or {}
+    vd = x.get("video_data") if isinstance(x.get("video_data"), dict) else x
+    sid = str(
+        vd.get("series_id")
+        or x.get("series_id")
+        or x.get("keyword")
+        or vd.get("keyword")
+        or ""
+    )
+    name = str(
+        vd.get("series_title")
+        or vd.get("series_name")
+        or x.get("series_name")
+        or x.get("name")
+        or "未命名"
+    )
+    count = vd.get("episode_cnt") or x.get("episode_cnt") or 0
+    pic = str(vd.get("series_cover") or x.get("series_cover") or "")
+    intro = str(vd.get("series_intro") or x.get("series_intro") or "")
     return {
         "vod_id": sid,
         "vod_name": name,
         "vod_pic": pic,
-        "vod_remarks": remarks,
+        "vod_remarks": ("全%s集" % count) if count else "",
         "vod_content": intro,
     }
 
+def _cat_item(x):
+    return _item(x)
 
-def _row_tags(row):
-    tags = (row or {}).get("tags")
-    if isinstance(tags, list):
-        return [str(t) for t in tags if t]
-    return []
+def _filter_group(key, name, values):
+    return {"key": key, "name": name, "value": [{"n": n, "v": v} for n, v in values]}
 
 
-def _int_page(value, default=1):
+def _search_api(key: str, page: int = 1) -> dict:
+    """官网搜索接口 /api/search/result（搜索页已改客户端渲染，SSR 无数据）。"""
+    empty = {"searchList": [], "totalCount": 0, "totalPages": 1, "hasMore": False}
     try:
-        return max(1, int(value))
-    except (TypeError, ValueError):
-        return default
-
-
-def _page_slice(items, pg, size=24):
-    start = (pg - 1) * size
-    return items[start : start + size]
-
-
-def _pagecount(total, size=24):
-    return max(1, (total + size - 1) // size)
-
-
-def _hg_limited_error(exc):
-    text = str(exc or "")
-    return ("video_model empty" in text or "video_model data empty" in text or "video model missing url or key material" in text)
-
-
-def _hg_register_device():
-    try:
-        import uuid as _uuid
-        openudid = "".join(random.choice("0123456789abcdef") for _ in range(16))
-        header = {"display_name": "红果免费短剧", "aid": 8662, "app_version": "7.3.5.32", "version_code": 73532, "manifest_version_code": 73532, "update_version_code": 73532, "channel": "update_64", "package": "com.phoenix.read", "app_language": "zh", "os": "Android", "os_version": "16", "os_api": 36, "device_model": "25053RT47C", "device_brand": "Redmi", "device_manufacturer": "Xiaomi", "cpu_abi": "arm64-v8a", "density_dpi": 520, "display_density": "xxhdpi", "resolution": "2772x1280", "language": "zh", "timezone": 8, "access": "wifi", "openudid": openudid, "clientudid": str(_uuid.uuid4()), "cdid": str(_uuid.uuid4()), "region": "CN", "tz_name": "Asia/Shanghai", "tz_offset": 28800, "sim_region": "cn", "device_platform": "android", "not_request_sender": 0, "is_system_app": 0, "sdk_flavor": "china", "rom": "OS2.0", "rom_version": "BP2A.250605.031.A3"}
-        body = json.dumps({"magic_tag": "ss_app_log", "header": header, "_gen_time": int(time.time() * 1000)}).encode("utf-8")
-        qs = urlencode({"req_id": str(_uuid.uuid4()), "_rticket": int(time.time() * 1000)})
-        req = urllib.request.Request("https://log.snssdk.com/service/2/device_register/?" + qs, data=body, headers={"User-Agent": "com.phoenix.read/73532 (Linux; U; Android 16; zh_CN; 25053RT47C; Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 QuicVersion:c67e9834 2025-09-08)", "Accept": "application/json", "Content-Type": "application/json; charset=utf-8"})
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            if resp.status != 200:
-                return None
-            data = json.loads(resp.read().decode("utf-8", "replace"))
-        did = str(data.get("device_id_str") or data.get("device_id") or "")
-        iid = str(data.get("install_id_str") or data.get("install_id") or "")
-        if did.isdigit() and iid.isdigit() and did != "0" and iid != "0":
-            return did, iid
+        session = requests.Session()
+        session.trust_env = False
+        session.headers.update(
+            {
+                "User-Agent": UA,
+                "Accept": "application/json, text/plain, */*",
+                "Referer": SITE + "/",
+            }
+        )
+        # 首访拿 ttwid，缺了上游只回空列表
+        try:
+            session.get(SITE + "/", timeout=10)
+        except Exception:
+            pass
+        r = session.get(
+            SITE + "/api/search/result",
+            params={
+                "aid": "8662",
+                "query": str(key or ""),
+                "page": str(max(1, int(page or 1))),
+            },
+            timeout=20,
+        )
+        if r.status_code != 200:
+            return empty
+        data = r.json()
+        rows = data.get("searchList") or []
+        if not isinstance(rows, list) or not rows:
+            return empty
+        try:
+            total_pages = int(data.get("totalPages") or 1)
+        except Exception:
+            total_pages = 1
+        try:
+            total_count = int(data.get("totalCount") or 0)
+        except Exception:
+            total_count = 0
+        return {
+            "searchList": rows,
+            "totalCount": total_count,
+            "totalPages": max(1, total_pages),
+            "hasMore": bool(data.get("hasMore")),
+        }
     except Exception:
-        pass
-    return None
+        return empty
 
 
+def _search_loader(key: str, page: int = 1) -> dict:
+    """搜索：优先官网 XHR 接口，失败退回旧 SSR 页（已多半无数据，仅兜底）。"""
+    api = _search_api(key, page)
+    if api.get("searchList"):
+        return api
+    last = {}
+    for attempt in range(2):
+        try:
+            data = _data(SITE + "/search/" + quote(str(key), safe=""))
+            loaded = (data.get("loaderData") or {}).get("search_(keyword)/page") or {}
+            if loaded.get("searchList"):
+                return loaded
+            last = loaded or last
+        except Exception:
+            pass
+        try:
+            time.sleep(0.4 * (attempt + 1))
+        except Exception:
+            pass
+    return last
 
-_FQ_FONT_MAP = {
-    58344: 'D',
-    58345: '在',
-    58346: '主',
-    58347: '特',
-    58348: '家',
-    58349: '军',
-    58350: '然',
-    58351: '表',
-    58352: '场',
-    58353: '4',
-    58354: '要',
-    58355: '只',
-    58356: 'V',
-    58357: '和',
-    58359: '6',
-    58360: '别',
-    58361: '还',
-    58362: 'g',
-    58363: '现',
-    58364: '儿',
-    58365: '岁',
-    58368: '此',
-    58369: '象',
-    58370: '月',
-    58371: '3',
-    58372: '出',
-    58373: '战',
-    58374: '工',
-    58375: '相',
-    58376: 'o',
-    58377: '男',
-    58378: '直',
-    58379: '失',
-    58380: '世',
-    58381: 'F',
-    58382: '都',
-    58383: '平',
-    58384: '文',
-    58385: '什',
-    58386: 'V',
-    58387: 'O',
-    58388: '将',
-    58389: '真',
-    58390: 'T',
-    58391: '那',
-    58392: '当',
-    58394: '会',
-    58395: '立',
-    58396: '些',
-    58397: 'u',
-    58398: '是',
-    58399: '十',
-    58400: '张',
-    58401: '学',
-    58402: '气',
-    58403: '大',
-    58404: '爱',
-    58405: '两',
-    58406: '命',
-    58407: '全',
-    58408: '后',
-    58409: '东',
-    58410: '性',
-    58411: '通',
-    58412: '被',
-    58413: '1',
-    58414: '它',
-    58415: '乐',
-    58416: '接',
-    58417: '而',
-    58418: '感',
-    58419: '车',
-    58420: '山',
-    58421: '公',
-    58422: '了',
-    58423: '常',
-    58424: '以',
-    58425: '何',
-    58426: '可',
-    58427: '话',
-    58428: '先',
-    58429: 'p',
-    58430: 'i',
-    58431: '叫',
-    58432: '轻',
-    58433: 'M',
-    58434: '士',
-    58435: 'w',
-    58436: '着',
-    58437: '变',
-    58438: '尔',
-    58439: '快',
-    58440: 'I',
-    58441: '个',
-    58442: '说',
-    58443: '少',
-    58444: '色',
-    58445: '里',
-    58446: '安',
-    58447: '花',
-    58448: '远',
-    58449: '7',
-    58450: '难',
-    58451: '师',
-    58452: '放',
-    58453: 't',
-    58454: '报',
-    58455: '认',
-    58456: '面',
-    58457: '道',
-    58458: 'S',
-    58460: '克',
-    58461: '地',
-    58462: '度',
-    58463: 'I',
-    58464: '好',
-    58465: '机',
-    58466: 'U',
-    58467: '民',
-    58468: '写',
-    58469: '把',
-    58470: '万',
-    58471: '同',
-    58472: '水',
-    58473: '新',
-    58474: '没',
-    58475: '书',
-    58476: '电',
-    58477: '吃',
-    58478: '像',
-    58479: '斯',
-    58480: '5',
-    58481: '为',
-    58482: 'y',
-    58483: '白',
-    58484: '几',
-    58485: '日',
-    58486: '教',
-    58487: '看',
-    58488: '但',
-    58489: '第',
-    58490: '加',
-    58491: '候',
-    58492: '作',
-    58493: '上',
-    58494: '拉',
-    58495: '住',
-    58496: '有',
-    58497: '法',
-    58498: 'r',
-    58499: '事',
-    58500: '应',
-    58501: '位',
-    58502: '利',
-    58503: '你',
-    58504: '声',
-    58505: '身',
-    58506: '国',
-    58507: '问',
-    58508: '马',
-    58509: '女',
-    58510: '他',
-    58511: 'Y',
-    58512: '比',
-    58513: '父',
-    58514: 'x',
-    58515: 'A',
-    58516: 'H',
-    58517: 'N',
-    58518: 's',
-    58519: 'X',
-    58520: '边',
-    58521: '美',
-    58522: '对',
-    58523: '所',
-    58524: '金',
-    58525: '活',
-    58526: '回',
-    58527: '意',
-    58528: '到',
-    58529: 'z',
-    58530: '从',
-    58531: 'j',
-    58532: '知',
-    58533: '又',
-    58534: '内',
-    58535: '因',
-    58536: '点',
-    58537: 'Q',
-    58538: '三',
-    58539: '定',
-    58540: '8',
-    58541: 'R',
-    58542: 'b',
-    58543: '正',
-    58544: '或',
-    58545: '夫',
-    58546: '向',
-    58547: '德',
-    58548: '听',
-    58549: '更',
-    58551: '得',
-    58552: '告',
-    58553: '并',
-    58554: '本',
-    58555: 'q',
-    58556: '过',
-    58557: '记',
-    58558: 'L',
-    58559: '让',
-    58560: '打',
-    58561: 'f',
-    58562: '人',
-    58563: '就',
-    58564: '者',
-    58565: '去',
-    58566: '原',
-    58567: '满',
-    58568: '体',
-    58569: '做',
-    58570: '经',
-    58571: 'K',
-    58572: '走',
-    58573: '如',
-    58574: '孩',
-    58575: 'c',
-    58576: 'G',
-    58577: '给',
-    58578: '使',
-    58579: '物',
-    58581: '最',
-    58582: '笑',
-    58583: '部',
-    58585: '员',
-    58586: '等',
-    58587: '受',
-    58588: 'k',
-    58589: '行',
-    58590: '一',
-    58591: '条',
-    58592: '果',
-    58593: '动',
-    58594: '光',
-    58595: '门',
-    58596: '头',
-    58597: '见',
-    58598: '往',
-    58599: '自',
-    58600: '解',
-    58601: '成',
-    58602: '处',
-    58603: '天',
-    58604: '能',
-    58605: '于',
-    58606: '名',
-    58607: '其',
-    58608: '发',
-    58609: '总',
-    58610: '母',
-    58611: '的',
-    58612: '死',
-    58613: '手',
-    58614: '入',
-    58615: '路',
-    58616: '进',
-    58617: '心',
-    58618: '来',
-    58619: 'h',
-    58620: '时',
-    58621: '力',
-    58622: '多',
-    58623: '开',
-    58624: '已',
-    58625: '许',
-    58626: 'd',
-    58627: '至',
-    58628: '由',
-    58629: '很',
-    58630: '界',
-    58631: 'n',
-    58632: '小',
-    58633: '与',
-    58634: 'Z',
-    58635: '想',
-    58636: '代',
-    58637: '么',
-    58638: '分',
-    58639: '生',
-    58640: '口',
-    58641: '再',
-    58642: '妈',
-    58643: '望',
-    58644: '次',
-    58645: '西',
-    58646: '风',
-    58647: '种',
-    58648: '带',
-    58649: 'J',
-    58651: '实',
-    58652: '情',
-    58653: '才',
-    58654: '这',
-    58656: 'E',
-    58657: '我',
-    58658: '神',
-    58659: '格',
-    58660: '长',
-    58661: '觉',
-    58662: '间',
-    58663: '年',
-    58664: '眼',
-    58665: '无',
-    58666: '不',
-    58667: '亲',
-    58668: '关',
-    58669: '结',
-    58670: '0',
-    58671: '友',
-    58672: '信',
-    58673: '下',
-    58674: '却',
-    58675: '重',
-    58676: '己',
-    58677: '老',
-    58678: '2',
-    58679: '音',
-    58680: '字',
-    58681: 'm',
-    58682: '呢',
-    58683: '明',
-    58684: '之',
-    58685: '前',
-    58686: '高',
-    58687: 'P',
-    58688: 'B',
-    58689: '目',
-    58690: '太',
-    58691: 'e',
-    58692: '9',
-    58693: '起',
-    58694: '移',
-    58695: '她',
-    58696: '也',
-    58697: 'W',
-    58698: '用',
-    58699: '方',
-    58700: '子',
-    58701: '英',
-    58702: '每',
-    58703: '理',
-    58704: '便',
-    58705: '四',
-    58706: '数',
-    58707: '期',
-    58708: '中',
-    58709: 'C',
-    58710: '外',
-    58711: '样',
-    58712: 'a',
-    58713: '海',
-    58714: '们',
-    58715: '任',
-}
 
-def _fq_decode(text):
-    return "".join(_FQ_FONT_MAP.get(ord(c), c) for c in (text or ""))
-
-def _signed_json_post(base, devices, payload):
-    params = _params_74332(devices, None)
-    headers = {"User-Agent": _HG_APP_UA_74332, "Accept": "application/json; charset=utf-8", "Content-Type": "application/json; charset=UTF-8"}
-    signed_headers, signed_url = _core_sixgod(base, params, devices, payload, headers)
-    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    status, _, raw = _http_request(signed_url, headers=signed_headers, data=body, timeout=30)
-    if status >= 400:
-        raise HongguoPluginError("signed post http %s" % status)
-    data = json.loads(raw.decode("utf-8", "replace"))
-    code = data.get("code", data.get("Code", 0)) if isinstance(data, dict) else 0
-    if code not in (0, "0"):
-        raise HongguoPluginError("signed post code %s" % code)
-    return data
-
-def _collect_book_cards(node, out, seen):
-    if isinstance(node, dict):
-        bid = _text(node.get("book_id"))
-        bname = _text(node.get("book_name"))
-        if bid and bname and bid not in seen:
-            seen.add(bid)
-            out.append(node)
-        for value in node.values():
-            _collect_book_cards(value, out, seen)
-    elif isinstance(node, list):
-        for value in node:
-            _collect_book_cards(value, out, seen)
-
-def _bookmall_tab_books(devices, tab_type):
-    data = _signed_json_get("https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/bookmall/tab/v", devices, {"tab_type": str(tab_type)})
+def _search_by_keywords(keywords, page: int) -> dict:
+    """多关键词轮换：第 N 页用第 N 个关键词（循环），避免搜索无法翻页。"""
+    page = max(1, int(page or 1))
+    kws = [k for k in (keywords or []) if k]
+    if not kws:
+        kws = ["短剧"]
+    key = kws[(page - 1) % len(kws)]
+    p = _search_loader(key)
+    rows = p.get("searchList") or []
+    # 去重空 id
     out = []
     seen = set()
-    _collect_book_cards(data, out, seen)
-    return out
-
-_BOOKCAT_L1 = [
-    ("1", "都市"), ("2", "都市生活"), ("3", "现代言情"), ("4", "校园"),
-    ("5", "古代言情"), ("6", "奇幻"), ("7", "玄幻"), ("8", "科幻末世"),
-    ("9", "仙侠"), ("10", "悬疑"), ("11", "乡村"), ("12", "历史"),
-    ("13", "军事"), ("15", "体育"),
-]
-_BOOKCAT_RULE_CACHE = {}
-
-
-def _bookcat_sub_list(devices, cat_id):
-    if cat_id in _BOOKCAT_RULE_CACHE:
-        return _BOOKCAT_RULE_CACHE[cat_id]
-    try:
-        data = _signed_json_get("https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/new_category/landing/v", devices, {"category_id": str(cat_id)})
-        rule = (data.get("data") or {}).get("rule") or {}
-        subs = []
-        for item in (rule.get("sub_category") or []):
-            if isinstance(item, dict) and item.get("name"):
-                subs.append((str(item.get("name")), "" if str(item.get("name")) == "全部" else str(item.get("value"))))
-        if not subs:
-            subs = [("全部", "")]
-        _BOOKCAT_RULE_CACHE[cat_id] = subs
-        return subs
-    except Exception:
-        return [("全部", "")]
+    for x in rows:
+        it = _item(x)
+        vid = str(it.get("vod_id") or "")
+        if not vid or vid in seen:
+            continue
+        seen.add(vid)
+        out.append(it)
+    # 虚拟页数：关键词数；若站点有 totalCount 也参考
+    total = int(p.get("totalCount") or 0)
+    pagecount = max(len(kws), (total + 9) // 10 if total else len(kws))
+    return {
+        "page": page,
+        "pagecount": max(1, pagecount),
+        "limit": len(out),
+        "total": total or len(out) * pagecount,
+        "list": out,
+    }
 
 
-def _bookcat_books(devices, cat_id, sub, status, sort, page):
-    params = {"category_id": str(cat_id), "offset": str((page - 1) * 10)}
-    if sub:
-        params["sub_category_id"] = str(sub)
-    if status:
-        params["book_status"] = str(status)
-    if sort:
-        params["sort_by"] = str(sort)
-    data = _signed_json_get("https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/new_category/landing/v", devices, params)
-    payload = data.get("data") or {}
-    return (payload.get("book_info") or []), bool(payload.get("has_more"))
+def _hg_search_scan(key, page=1, max_pages=8):
+    """搜索兜底：官方搜索接口被风控时，扫官方分类页按标题命中（并发）。"""
+    key = str(key or "").strip()
+    page = max(1, int(page or 1))
+    empty = {"page": page, "pagecount": 1, "limit": 0, "total": 0, "list": []}
+    if not key:
+        return empty
+    routes = [r for r, _n, _c in _HG_CONTENT_TYPES]
+    jobs = [(r, p) for r in routes for p in range(1, max_pages + 1)]
 
+    def work(rp):
+        r, p = rp
+        try:
+            return _hg_category_page(r, "", p).get("recommendList") or []
+        except Exception:
+            return []
 
-def _book_card(book, prefix):
-    bid = _text(book.get("book_id"))
-    name = _text(book.get("book_name") or book.get("book_short_name"))
-    pic = _text(book.get("thumb_url") or book.get("detail_page_thumb_url"))
-    desc = _text(book.get("abstract") or book.get("book_abstract_v2"))
-    serial = book.get("serial_count") or book.get("content_chapter_number")
-    remark = ("%s章" % serial) if serial else ""
-    author = _text(book.get("author"))
-    return {"vod_id": "%s#%s" % (prefix, bid), "vod_name": name, "vod_pic": pic, "vod_content": desc, "vod_remarks": remark, "vod_year": "", "vod_area": "", "vod_actor": author, "vod_director": ""}
-
-def _book_directory(book_id, devices):
-    items = []
+    hits = []
     seen = set()
-    offset = "0"
-    for _ in range(40):
-        data = _signed_json_get("https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/directory/all_items/v", devices, {"book_id": str(book_id), "offset": str(offset), "count": "500"})
-        rows = ((data.get("data") or {}).get("item_data_list") or [])
-        fresh = 0
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            iid = _text(row.get("item_id"))
-            if not iid or iid in seen:
-                continue
-            seen.add(iid)
-            items.append(row)
-            fresh += 1
-        if not rows or fresh == 0:
-            break
-        offset = _text(rows[-1].get("item_id"))
-        if not offset:
-            break
-    return items
-
-def _reader_chapter_text(item_id):
-    url = "https://fanqienovel.com/reader/" + str(item_id)
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://fanqienovel.com/"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        html = resp.read().decode("utf-8", "replace")
-    paras = re.findall(r"<p[^>]*>(.*?)</p>", html, re.S)
-    out = []
-    for p in paras:
-        t = re.sub(r"<[^>]+>", "", p)
-        t = html_lib.unescape(t).strip()
-        if sum(1 for c in t if 0xE000 <= ord(c) <= 0xF8FF) >= 3:
-            out.append(_fq_decode(t))
-    if not out:
-        raise HongguoPluginError("chapter text empty")
-    return "\n".join(out)
-
-def _audio_tone_id(book_id, devices):
     try:
-        data = _signed_json_get("https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/audio/toneinfo/", devices, {"book_id": str(book_id)})
-        tones = ((data.get("data") or {}).get("tts_tones") or [])
-        for tone in tones:
-            if isinstance(tone, dict) and tone.get("id") is not None:
-                return int(tone.get("id"))
-        rec = (data.get("data") or {}).get("recommend_tone")
-        if rec is not None:
-            return int(rec)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+            for rows in ex.map(work, jobs):
+                for x in rows:
+                    if not isinstance(x, dict):
+                        continue
+                    nm = str(x.get("series_name") or x.get("series_title") or "")
+                    if key and key not in nm:
+                        continue
+                    it = _item(x)
+                    vid = str(it.get("vod_id") or "")
+                    if not vid or vid in seen:
+                        continue
+                    seen.add(vid)
+                    hits.append(it)
     except Exception:
         pass
-    try:
-        data = _signed_json_get("https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/audio/detail/", devices, {"book_id": str(book_id)})
-        tones = _text((data.get("data") or {}).get("tones"))
-        for part in tones.split(","):
-            part = part.strip()
-            if part.isdigit():
-                return int(part)
-    except Exception:
-        pass
-    raise HongguoPluginError("no audio tone")
+    if not hits:
+        return empty
+    per = 20
+    st = (page - 1) * per
+    chunk = hits[st:st + per]
+    return {
+        "page": page,
+        "pagecount": max(1, (len(hits) + per - 1) // per),
+        "limit": len(chunk),
+        "total": len(hits),
+        "list": chunk,
+    }
 
-_AUDIO_CACHE = {}
-_AUDIO_CACHE_ORDER = []
 
-def _audio_session_bytes(book_id, item_id, tone_id, devices):
-    key = (str(book_id), str(item_id), int(tone_id))
-    if key in _AUDIO_CACHE:
-        return _AUDIO_CACHE[key]
-    payload = {"book_id": int(book_id), "item_id": int(item_id), "tone_id": int(tone_id), "req_type": 0}
-    data = _signed_json_post("https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/audio/playurl/", devices, payload)
-    payload_data = data.get("data") or {}
-    main_url = _text(payload_data.get("main_url"))
-    enc_key = _text(payload_data.get("encryption_key"))
-    if not main_url or not enc_key:
-        raise HongguoPluginError("audio playurl empty")
-    content_key = derive_content_key(enc_key)
-    req = urllib.request.Request(main_url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        raw = resp.read()
-    dec = decrypt_mp4_cenc(raw, content_key)
-    _AUDIO_CACHE[key] = dec
-    _AUDIO_CACHE_ORDER.append(key)
-    while len(_AUDIO_CACHE_ORDER) > 3:
-        old = _AUDIO_CACHE_ORDER.pop(0)
-        _AUDIO_CACHE.pop(old, None)
-    return dec
+def _category_loader(page: int, q: dict) -> dict:
+    """分类页带重试；page=1 偶发空列表时多试几次。"""
+    page = max(1, int(page or 1))
+    q = dict(q or {})
+    if page > 1:
+        q["page"] = str(page)
+    last = {}
+    for attempt in range(3):
+        try:
+            data = _data(SITE + "/category?" + urlencode(q))
+            p = (data.get("loaderData") or {}).get("category_$") or (data.get("loaderData") or {}).get("category_page") or {}
+            rows = p.get("recommendList") or []
+            if rows or page > 1:
+                return p
+            last = p or last
+        except Exception:
+            pass
+        try:
+            time.sleep(0.5 * (attempt + 1))
+        except Exception:
+            pass
+    return last
 
-def _novel_detail(book_id, devices, relay_port=0, relay_did="", relay_iid=""):
-    data = _signed_json_get("https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/multi-detail/v", devices, {"book_id": str(book_id), "book_type": "1"})
-    rows = data.get("data") or []
-    book = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else {}
-    name = _text(book.get("book_short_name") or book.get("original_book_name") or book.get("book_flight_alias_name"))
-    pic = _text(book.get("thumb_url") or book.get("detail_page_thumb_url"))
-    author = _text(book.get("author"))
-    desc = _text(book.get("abstract") or book.get("book_abstract_v2"))
-    serial = book.get("serial_count") or book.get("content_chapter_number")
-    items = _book_directory(book_id, devices)
-    eps = []
-    for row in items:
-        iid = _text(row.get("item_id"))
-        title = _text(row.get("title"))
-        if not iid or not title:
-            continue
-        marker = "novel://hgitem:%s?t=%s" % (iid, quote(title, safe=""))
-        eps.append("%s$%s" % (title, marker))
-    try:
-        tone_id = _audio_tone_id(book_id, devices) or 80
-    except Exception:
-        tone_id = 80
-    audio_eps = []
-    for row in items:
-        iid = _text(row.get("item_id"))
-        title = _text(row.get("title"))
-        if not iid or not title:
-            continue
-        query = urlencode({"book": str(book_id), "item": iid, "tone": str(tone_id), "did": relay_did, "iid": relay_iid})
-        ep_url = "http://127.0.0.1:%d/hg_audio.mp4?%s" % (relay_port, query) if relay_port else "http://127.0.0.1/hg_audio.mp4?%s" % query
-        audio_eps.append("%s$%s" % (title, ep_url))
-    content = desc
-    if serial:
-        content = (content + "\n\n共%s章" % serial) if content else ("共%s章" % serial)
-    play_from = "小说$$$听书" if audio_eps else "小说"
-    play_url = "#".join(eps) + "$$$" + "#".join(audio_eps) if audio_eps else "#".join(eps)
-    return {"vod_id": "novel#%s" % book_id, "vod_name": name, "vod_pic": pic, "vod_year": "", "vod_area": "", "vod_director": "", "vod_actor": author, "vod_content": content, "vod_remarks": ("%s章" % serial) if serial else "", "vod_play_from": play_from, "vod_play_url": play_url}
-
-def _audio_detail(book_id, devices, relay_port, relay_did, relay_iid):
-    data = _signed_json_get("https://api5-normal-sinfonlineb.fqnovel.com/reading/bookapi/audio/detail/", devices, {"book_id": str(book_id)})
-    book = data.get("data") or {}
-    name = _text(book.get("book_name") or book.get("book_short_name"))
-    pic = _text(book.get("thumb_url") or book.get("detail_page_thumb_url"))
-    author = _text(book.get("author"))
-    desc = _text(book.get("abstract") or book.get("book_abstract_v2"))
-    serial = book.get("serial_count") or book.get("content_chapter_number")
-    tone_id = _audio_tone_id(book_id, devices)
-    items = _book_directory(book_id, devices)
-    eps = []
-    for row in items:
-        iid = _text(row.get("item_id"))
-        title = _text(row.get("title"))
-        if not iid or not title:
-            continue
-        query = urlencode({"book": str(book_id), "item": iid, "tone": str(tone_id), "did": relay_did, "iid": relay_iid})
-        ep_url = "http://127.0.0.1:%d/hg_audio.mp4?%s" % (relay_port, query) if relay_port else "http://127.0.0.1/hg_audio.mp4?%s" % query
-        eps.append("%s$%s" % (title, ep_url))
-    content = desc
-    if serial:
-        content = (content + "\n\n共%s章" % serial) if content else ("共%s章" % serial)
-    return {"vod_id": "audio#%s" % book_id, "vod_name": name, "vod_pic": pic, "vod_year": "", "vod_area": "", "vod_director": "", "vod_actor": author, "vod_content": content, "vod_remarks": ("%s章" % serial) if serial else "", "vod_play_from": "听书", "vod_play_url": "#".join(eps)}
-
-class Spider(BaseSpider):
+class Spider(_BaseSpider):
     def __init__(self):
         self.device_id = str(random.randint(10**17, 10**18 - 1))
         self.install_id = str(random.randint(10**17, 10**18 - 1))
-        self._device_registered = False
-        self._device_limited = False
-        self._device_renew_cooldown_until = 0.0
-        self._device_lock = threading.Lock()
-        self._home_cache = None
+        self._device_conf = {"device_id": self.device_id, "install_id": self.install_id}
 
-    def _renew_device(self):
-        with self._device_lock:
-            if self._device_limited and time.time() < self._device_renew_cooldown_until:
-                return False
-            pair = _hg_register_device()
-            if pair:
-                self.device_id, self.install_id = pair
-                self._device_limited = False
-                self._device_registered = True
-                self._scan_cache = {}
-                self._raw_scan_cache = {}
-                self._search_opener = None
-                self._search_warmed = False
-                return True
-            self._device_renew_cooldown_until = time.time() + 600
-            return False
-
-    def _ensure_registered(self):
-        if self._device_registered and not self._device_limited:
+    def _adopt_working_pair(self):
+        pair = _working_device_pair()
+        if pair is not None:
+            self.device_id = pair["device_id"]
+            self.install_id = pair["install_id"]
+            self._device_conf = dict(pair)
             return
-        if self._device_registered and self._device_limited:
-            self._renew_device()
-            return
-        pair = _hg_register_device()
-        if pair:
-            self.device_id, self.install_id = pair
-        self._device_registered = True
-        self._scan_cache = {}
-        self._raw_scan_cache = {}
-        self._search_opener = None
-        self._search_warmed = False
+        conf = _rotate_stream_device()
+        self.device_id = conf["device_id"]
+        self.install_id = conf["install_id"]
+        self._device_conf = dict(conf)
 
     def getName(self):
         return "红果短剧"
 
+    def isVideoFormat(self, url):
+        u = str(url or "").lower()
+        return (".mp4" in u) or ("video_mp4" in u) or ("m3u8" in u) or ("mime_type=video" in u) or ("qznovelvod" in u)
+
+    def manualVideoCheck(self):
+        return False
+
     def getDependence(self):
         return []
 
-    def isVideoFormat(self, url):
-        u = str(url or "").lower()
-        return (".mp4" in u) or ("video_mp4" in u) or ("m3u8" in u) or ("qznovelvod" in u)
+    def download(self, path, url):
+        return ""
 
-    def manualVideoCheck(self):
+    def liveContent(self):
+        return {}
+
+    def isVPAYard(self, flag):
         return False
 
     def action(self, action):
         return ""
 
     def init(self, extend=""):
+        # 每次源实例使用随机合法设备标识；不依赖用户私有配置。
         try:
             _hg_cache_cleanup(False)
         except Exception:
             pass
+        # 中国出口代理（字节 API 对非中国 IP 返回空 body）。
+        # extend 支持 {"proxy": "http://host:port"} 或 {"proxyUrl": "..."} 两种键。
         try:
-            self._ensure_registered()
+            _STREAM_STATE.pop("device", None)
         except Exception:
             pass
+        try:
+            conf = _hg_device_pair_load() or _rotate_stream_device()
+            with _STREAM_LOCK:
+                _STREAM_STATE["device"] = dict(conf)
+            # 同步到实例，供 playerContent/_warm_session 使用（避免用 __init__ 的随机对）。
+            self._device_conf = dict(conf)
+            self.device_id = str(conf.get("device_id", ""))
+            self.install_id = str(conf.get("install_id", ""))
+        except Exception:
+            pass
+        try:
+            proxy = ""
+            if extend:
+                if isinstance(extend, str):
+                    text = extend.strip()
+                    if text.startswith("{"):
+                        cfg = json.loads(text)
+                        proxy = cfg.get("proxy") or cfg.get("proxyUrl") or ""
+                    else:
+                        proxy = text
+                elif isinstance(extend, Mapping):
+                    proxy = extend.get("proxy") or extend.get("proxyUrl") or ""
+            _hg_set_proxy(proxy)
+        except Exception:
+            _hg_set_proxy("")
         return None
 
     def destroy(self):
@@ -4594,938 +4444,154 @@ class Spider(BaseSpider):
         except Exception:
             pass
 
-    def _home_page(self):
-        if self._home_cache is None:
-            data = _router(SITE + "/")
-            self._home_cache = (data.get("loaderData") or {}).get("page") or {}
-        return self._home_cache
-
-    def _banner_cards(self):
-        try:
-            return [_card(item) for item in (self._home_page().get("bannerList") or [])]
-        except Exception:
-            return []
-
-    def _section_raw(self):
-        try:
-            sections = self._home_page().get("homeSections") or []
-        except Exception:
-            sections = []
-        out = {}
-        for sec in sections:
-            tab = str(sec.get("tab_type") or "")
-            if tab:
-                out[tab] = sec.get("video_list") or []
-        return out
-
-    def _section_cards(self, tab):
-        return [_card(item) for item in self._section_raw().get(tab, [])]
-
-    def _all_section_cards(self):
-        seen = set()
-        out = []
-        for tab in ("all", "human", "comic", "ai"):
-            for item in self._section_raw().get(tab, []):
-                card = _card(item)
-                sid = card.get("vod_id") or ""
-                if sid and sid not in seen:
-                    seen.add(sid)
-                    out.append(card)
-        return out
-
-    def _audio_scan_cards(self):
-        cached = getattr(self, "_audio_scan_cache", None)
-        if cached is not None:
-            return list(cached)
-        cards = []
-        cat_map = {}
-        if self.device_id and self.install_id:
-            devices = {"device_id": self.device_id, "install_id": self.install_id}
-            results = []
-            for _ in range(4):
-                try:
-                    results.append(_bookmall_tab_books(devices, "5"))
-                except Exception:
-                    pass
-            seen = set()
-            for books in results:
-                for b in books:
-                    bid = _text(b.get("book_id"))
-                    if not bid or bid in seen:
-                        continue
-                    seen.add(bid)
-                    card = _book_card(b, "audio")
-                    cards.append(card)
-                    cat_map[card.get("vod_id") or ""] = _text(b.get("category"))
-            if not cards:
-                try:
-                    books = _bookmall_tab_books(devices, "5")
-                    for b in books:
-                        card = _book_card(b, "audio")
-                        cards.append(card)
-                        cat_map[card.get("vod_id") or ""] = _text(b.get("category"))
-                except Exception:
-                    cards = []
-        self._audio_scan_cache = cards
-        self._audio_card_category = cat_map
-        return list(cards)
-
-    def homeContent(self, filter=""):
-        class_list = [
-            {"type_id": "home", "type_name": "首页推荐"},
-            {"type_id": "real", "type_name": "真人剧"},
-            {"type_id": "comic", "type_name": "漫剧"},
-            {"type_id": "hot_all", "type_name": "热播短剧"},
-            {"type_id": "hot_human", "type_name": "热播真人剧"},
-            {"type_id": "hot_comic", "type_name": "热播漫剧"},
-            {"type_id": "hot_ai", "type_name": "热播AI剧"},
-            {"type_id": "latest", "type_name": "最新上架"},
-            {"type_id": "bookmall", "type_name": "书城找剧"},
-            {"type_id": "novel", "type_name": "小说"},
-            {"type_id": "audio", "type_name": "听书"},
-        ]
-        tag_groups = _filter_groups()
-        cat_group = {"key": "cat", "name": "分类", "value": [{"n": v, "v": "" if v == "全部" else v} for v in ["全部"] + _DRAMA_CAT]}
-        filters = {"real": [cat_group] + tag_groups, "comic": tag_groups}
-        try:
-            self._ensure_registered()
-        except Exception:
-            pass
-        devices = {"device_id": self.device_id or "", "install_id": self.install_id or ""}
-        try:
-            audio_cards = self._audio_scan_cards()
-        except Exception:
-            audio_cards = []
-        cat_map = getattr(self, "_audio_card_category", None) or {}
-        counts = {}
-        for card in audio_cards:
-            cat = cat_map.get(card.get("vod_id") or "")
-            if cat:
-                counts[cat] = counts.get(cat, 0) + 1
-        ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
-        filters["audio"] = [{"key": "acat", "name": "分类", "value": [{"n": "全部", "v": ""}] + [{"n": n, "v": n} for n, _ in ordered]}]
-        filters["novel"] = [
-            {"key": "ncat", "name": "二级分类", "value": [{"n": "全部", "v": ""}] + [{"n": n, "v": i} for i, n in _BOOKCAT_L1]},
-            {"key": "nstatus", "name": "状态", "value": [{"n": n, "v": v} for n, v in [("全部", ""), ("完结", "0"), ("连载中", "1"), ("今日更新", "3")]]},
-            {"key": "nsort", "name": "排序", "value": [{"n": n, "v": v} for n, v in [("综合", ""), ("热门", "24"), ("最新", "76"), ("评分", "12")]]},
-        ]
-        filters["hot_all"] = [cat_group] + tag_groups
-        filters["hot_human"] = [cat_group] + tag_groups
-        filters["hot_comic"] = tag_groups
-        filters["hot_ai"] = tag_groups
-        filters["latest"] = [cat_group] + tag_groups
-        try:
-            home_list = self._banner_cards() + self._section_cards("all")
-            seen = set()
-            deduped = []
-            for card in home_list:
-                sid = card.get("vod_id") or ""
-                if sid and sid not in seen:
-                    seen.add(sid)
-                    deduped.append(card)
-            home_list = deduped
-        except Exception:
-            home_list = []
-        return {"class": class_list, "filters": filters, "list": home_list}
-
-    def homeVideoContent(self):
-        try:
-            out = self._banner_cards() + self._all_section_cards()
-            seen = set()
-            deduped = []
-            for card in out:
-                sid = card.get("vod_id") or ""
-                if sid and sid not in seen:
-                    seen.add(sid)
-                    deduped.append(card)
-            return {"list": deduped}
-        except Exception:
-            return {"list": []}
-
-    def _category_page(self, tab, pg):
-        query = {"tab": tab}
-        if pg > 1:
-            query["page"] = str(pg)
-        data = _router(SITE + "/category?" + urlencode(query))
-        page = (data.get("loaderData") or {}).get("category_$") or {}
-        rows = page.get("recommendList") or []
-        pagination = page.get("pagination") or {}
-        return rows, pagination
-
-    def _safe_category_rows(self, tab, pg):
-        for attempt in range(3):
-            try:
-                page_rows, _ = self._category_page(tab, pg)
-                return page_rows or []
-            except Exception:
-                if attempt + 1 < 3:
-                    time.sleep(1.0 * (attempt + 1))
-        return []
-
-    def _try_category_rows(self, tab, pg):
-        for attempt in range(3):
-            try:
-                page_rows, _ = self._category_page(tab, pg)
-                return page_rows or []
-            except Exception:
-                if attempt + 1 < 3:
-                    time.sleep(1.0 * (attempt + 1))
-        return None
-
-    def _raw_scan(self, tid):
-        if tid in self._raw_scan_cache:
-            return self._raw_scan_cache[tid]
-        rows = self._scan_category(tid)
-        self._raw_scan_cache[tid] = rows
-        return rows
-
-    def _scan_category(self, tid):
-        from concurrent.futures import ThreadPoolExecutor
-
-        tab = "1" if tid == "real" else "2"
-        rows = None
-        pagination = {}
-        for attempt in range(3):
-            try:
-                rows, pagination = self._category_page(tab, 1)
-                break
-            except Exception:
-                if attempt + 1 < 3:
-                    time.sleep(1.0 * (attempt + 1))
-        if rows is None:
-            raise HongguoPluginError("category page 1 fetch failed")
-        all_rows = list(rows)
-        try:
-            total_pages = int(pagination.get("totalPages") or 1)
-        except (TypeError, ValueError):
-            total_pages = 1
-        total_pages = max(1, min(total_pages, 40))
-        if total_pages > 1:
-            by_page = {}
-            pending = list(range(2, total_pages + 1))
-            for _round in range(3):
-                if not pending:
-                    break
-                with ThreadPoolExecutor(max_workers=6) as pool:
-                    results = list(
-                        pool.map(
-                            lambda pg: self._try_category_rows(tab, pg),
-                            pending,
-                        )
-                    )
-                failed = []
-                for pg, page_rows in zip(pending, results):
-                    if page_rows is None:
-                        failed.append(pg)
-                    else:
-                        by_page[pg] = page_rows
-                pending = failed
-            for pg in range(2, total_pages + 1):
-                all_rows.extend(by_page.get(pg) or [])
-        return all_rows
-
-    def _has_filter(self, extend):
-        if isinstance(extend, str) and extend:
-            try:
-                extend = json.loads(extend)
-            except Exception:
-                extend = {}
-        if isinstance(extend, dict):
-            for key in ("cat", "topic", "background", "setting"):
-                val = extend.get(key)
-                if val is not None and str(val) not in ("", "all", "0"):
-                    return True
-        return False
-
-    def _filtered_rows(self, tid, extend):
-        values = {"cat": "", "topic": "", "background": "", "setting": ""}
-        if isinstance(extend, str) and extend:
-            try:
-                extend = json.loads(extend)
-            except Exception:
-                extend = {}
-        if isinstance(extend, dict):
-            for key in values:
-                val = extend.get(key)
-                if val is not None:
-                    values[key] = str(val)
-        key = (tid, values["cat"], values["topic"], values["background"], values["setting"])
-        if key in self._scan_cache:
-            return self._scan_cache[key]
-        rows = self._raw_scan(tid)
-        matched = []
-        for row in rows:
-            tags = _row_tags(row)
-            if values["cat"] and values["cat"] not in tags:
-                continue
-            if values["topic"] and values["topic"] not in tags:
-                continue
-            if values["background"] and values["background"] not in tags:
-                continue
-            if values["setting"] and values["setting"] not in tags:
-                continue
-            matched.append(row)
-        self._scan_cache[key] = matched
-        return matched
-
-    def _latest_cards(self):
-        seen = set()
-        items = []
-        for tab in ("all", "human", "comic", "ai"):
-            for item in self._section_raw().get(tab, []):
-                sid = str(item.get("series_id") or "")
-                if sid and sid not in seen:
-                    seen.add(sid)
-                    items.append(item)
-        def _ctime(item):
-            try:
-                return int(item.get("create_time") or 0)
-            except (TypeError, ValueError):
-                return 0
-        items.sort(key=_ctime, reverse=True)
-        return [_card(item) for item in items]
-
-    def _section_item_tags(self, item):
-        names = []
-        for c in (item or {}).get("category_list") or []:
-            if isinstance(c, dict) and c.get("name"):
-                names.append(str(c.get("name")))
-        return names
-
-    def _section_filtered_cards(self, tabs, extend):
-        values = {"cat": "", "topic": "", "background": "", "setting": ""}
-        if isinstance(extend, str) and extend:
-            try:
-                extend = json.loads(extend)
-            except Exception:
-                extend = {}
-        if isinstance(extend, dict):
-            for key in values:
-                val = extend.get(key)
-                if val is not None:
-                    values[key] = str(val)
-        raw = self._section_raw()
-        items = []
-        for tab in tabs:
-            items.extend(raw.get(tab, []))
-        matched = []
-        for item in items:
-            names = self._section_item_tags(item)
-            if values["cat"] and values["cat"] not in names:
-                continue
-            if values["topic"] and values["topic"] not in names:
-                continue
-            if values["background"] and values["background"] not in names:
-                continue
-            if values["setting"] and values["setting"] not in names:
-                continue
-            matched.append(item)
-        if len(tabs) > 1:
-            def _ctime(item):
-                try:
-                    return int(item.get("create_time") or 0)
-                except (TypeError, ValueError):
-                    return 0
-            matched.sort(key=_ctime, reverse=True)
-        seen = set()
-        out = []
-        for item in matched:
-            card = _card(item)
-            sid = card.get("vod_id") or ""
-            if sid and sid not in seen:
-                seen.add(sid)
-                out.append(card)
-        return out
-
-    def _novel_scan_cards(self):
-        cached = getattr(self, "_novel_scan_cache", None)
-        if cached is not None:
-            return list(cached)
-        cards = []
-        cat_map = {}
-        if self.device_id and self.install_id:
-            devices = {"device_id": self.device_id, "install_id": self.install_id}
-            results = []
-            for _ in range(3):
-                try:
-                    results.append(_bookmall_tab_books(devices, "2"))
-                except Exception:
-                    pass
-            seen = set()
-            for books in results:
-                for b in books:
-                    bid = _text(b.get("book_id"))
-                    if not bid or bid in seen:
-                        continue
-                    seen.add(bid)
-                    card = _book_card(b, "novel")
-                    cards.append(card)
-                    cat_map[card.get("vod_id") or ""] = _text(b.get("category"))
-            if not cards:
-                try:
-                    books = _bookmall_tab_books(devices, "2")
-                    for b in books:
-                        card = _book_card(b, "novel")
-                        cards.append(card)
-                        cat_map[card.get("vod_id") or ""] = _text(b.get("category"))
-                except Exception:
-                    cards = []
-        self._novel_scan_cache = cards
-        self._novel_card_category = cat_map
-        return list(cards)
+    def homeContent(self, filter):
+        """分类=官方四套内容类型（真人剧/漫剧/AI剧/漫画），二级分类取官方分类路由。"""
+        class_list = [{"type_id": k, "type_name": n} for k, n, _ in _HG_CONTENT_TYPES]
+        filters = {}
+        for k, _n, cats in _HG_CONTENT_TYPES:
+            if len(cats) > 1:
+                filters[k] = [{
+                    "key": "cat",
+                    "name": "分类",
+                    "value": [{"n": nm, "v": v} for v, nm in cats],
+                }]
+        return {"class": class_list, "filters": filters}
 
     def categoryContent(self, tid, pg, filter, extend):
-        page = _int_page(pg, 1)
-        tid = str(tid or "")
+        """走官方分类页 /category/{route}/{item}?page=N，标题取官方 series_name。"""
         try:
-            if tid in ("hot_all", "hot_human", "hot_comic", "hot_ai"):
-                tab = {"hot_all": "all", "hot_human": "human", "hot_comic": "comic", "hot_ai": "ai"}[tid]
-                if self._has_filter(extend):
-                    cards = self._section_filtered_cards([tab], extend)
-                else:
-                    cards = self._section_cards(tab)
-                return {
-                    "page": page,
-                    "pagecount": _pagecount(len(cards)),
-                    "limit": len(_page_slice(cards, page)),
-                    "total": len(cards),
-                    "list": _page_slice(cards, page),
-                }
-            if tid == "bookmall":
-                try:
-                    self._ensure_registered()
-                except Exception:
-                    pass
-                cards = []
-                if self.device_id and self.install_id:
-                    try:
-                        cards = _bookmall_cards({"device_id": self.device_id, "install_id": self.install_id})
-                    except Exception:
-                        cards = []
-                return {
-                    "page": page,
-                    "pagecount": _pagecount(len(cards)),
-                    "limit": len(_page_slice(cards, page)),
-                    "total": len(cards),
-                    "list": _page_slice(cards, page),
-                }
-            if tid == "novel":
-                try:
-                    self._ensure_registered()
-                except Exception:
-                    pass
-                extend_values = {}
-                if isinstance(extend, str) and extend:
-                    try:
-                        extend_values = json.loads(extend)
-                    except Exception:
-                        extend_values = {}
-                elif isinstance(extend, dict):
-                    extend_values = extend
-                ncat = str(extend_values.get("ncat") or "")
-                nstatus = str(extend_values.get("nstatus") or "")
-                nsort = str(extend_values.get("nsort") or "")
-                if ncat and ncat in [cid for cid, _ in _BOOKCAT_L1]:
-                    cards = []
-                    has_more = False
-                    if self.device_id and self.install_id:
-                        try:
-                            books, has_more = _bookcat_books({"device_id": self.device_id, "install_id": self.install_id}, ncat, "", nstatus, nsort, page)
-                            cards = [_book_card(b, "novel") for b in books]
-                        except Exception:
-                            cards = []
-                            has_more = False
-                    return {
-                        "page": page,
-                        "pagecount": page + 1 if has_more else page,
-                        "limit": len(cards),
-                        "total": len(cards),
-                        "list": cards,
-                    }
-                cards = self._novel_scan_cards()
-                return {
-                    "page": page,
-                    "pagecount": _pagecount(len(cards)),
-                    "limit": len(_page_slice(cards, page)),
-                    "total": len(cards),
-                    "list": _page_slice(cards, page),
-                }
-            if tid == "audio":
-                try:
-                    self._ensure_registered()
-                except Exception:
-                    pass
-                extend_values = {}
-                if isinstance(extend, str) and extend:
-                    try:
-                        extend_values = json.loads(extend)
-                    except Exception:
-                        extend_values = {}
-                elif isinstance(extend, dict):
-                    extend_values = extend
-                acat = str(extend_values.get("acat") or "")
-                cards = self._audio_scan_cards()
-                if acat:
-                    cat_map = getattr(self, "_audio_card_category", None) or {}
-                    cards = [c for c in cards if cat_map.get(c.get("vod_id") or "") == acat]
-                return {
-                    "page": page,
-                    "pagecount": _pagecount(len(cards)),
-                    "limit": len(_page_slice(cards, page)),
-                    "total": len(cards),
-                    "list": _page_slice(cards, page),
-                }
-            if tid == "latest":
-                if self._has_filter(extend):
-                    cards = self._section_filtered_cards(["all", "human", "comic", "ai"], extend)
-                else:
-                    cards = self._latest_cards()
-                return {
-                    "page": page,
-                    "pagecount": _pagecount(len(cards)),
-                    "limit": len(_page_slice(cards, page)),
-                    "total": len(cards),
-                    "list": _page_slice(cards, page),
-                }
-            if tid == "home":
-                cards = self._banner_cards() + self._section_cards("all")
-                seen = set()
-                deduped = []
-                for card in cards:
-                    sid = card.get("vod_id") or ""
-                    if sid and sid not in seen:
-                        seen.add(sid)
-                        deduped.append(card)
-                return {
-                    "page": page,
-                    "pagecount": _pagecount(len(deduped)),
-                    "limit": len(_page_slice(deduped, page)),
-                    "total": len(deduped),
-                    "list": _page_slice(deduped, page),
-                }
-            if tid in ("real", "comic"):
-                if not self._has_filter(extend):
-                    tab = "1" if tid == "real" else "2"
-                    rows, pagination = self._category_page(tab, page)
-                    try:
-                        total_pages = int(pagination.get("totalPages") or 1)
-                    except (TypeError, ValueError):
-                        total_pages = 1
-                    try:
-                        total = int(pagination.get("total") or len(rows))
-                    except (TypeError, ValueError):
-                        total = len(rows)
-                    return {
-                        "page": page,
-                        "pagecount": max(1, total_pages),
-                        "limit": len(rows),
-                        "total": total,
-                        "list": [_card(row) for row in rows],
-                    }
-                rows = self._filtered_rows(tid, extend)
-                cards = [_card(row) for row in rows]
-                sliced = _page_slice(cards, page)
-                return {
-                    "page": page,
-                    "pagecount": _pagecount(len(cards)),
-                    "limit": len(sliced),
-                    "total": len(cards),
-                    "list": sliced,
-                }
-        except Exception:
-            pass
-        if tid.startswith("bcat"):
-            cat_id = tid[4:]
-            if cat_id not in [cid for cid, _ in _BOOKCAT_L1]:
-                return {"page": page, "pagecount": 1, "limit": 0, "total": 0, "list": []}
+            page = max(1, int(pg))
+        except (TypeError, ValueError):
+            page = 1
+        route = _hg_route_of(tid)
+        ext = {}
+        if isinstance(extend, str) and extend:
             try:
-                self._ensure_registered()
+                ext = json.loads(extend)
             except Exception:
-                pass
-            extend_values = {}
-            if isinstance(extend, str) and extend:
-                try:
-                    extend_values = json.loads(extend)
-                except Exception:
-                    extend_values = {}
-            elif isinstance(extend, dict):
-                extend_values = extend
-            sub = str(extend_values.get("sub") or "")
-            status = str(extend_values.get("status") or "")
-            sort = str(extend_values.get("sort") or "")
-            cards = []
-            has_more = False
-            if self.device_id and self.install_id:
-                try:
-                    books, has_more = _bookcat_books({"device_id": self.device_id, "install_id": self.install_id}, cat_id, sub, status, sort, page)
-                    cards = [_book_card(b, "novel") for b in books]
-                except Exception:
-                    cards = []
-                    has_more = False
-            return {
-                "page": page,
-                "pagecount": page + 1 if has_more else page,
-                "limit": len(cards),
-                "total": len(cards),
-                "list": cards,
-            }
-        return {"page": page, "pagecount": 1, "limit": 0, "total": 0, "list": []}
-
-    def _search_opener_get(self):
-        if self._search_opener is None:
-            jar = http.cookiejar.CookieJar()
-            self._search_opener = urllib.request.build_opener(
-                urllib.request.HTTPCookieProcessor(jar)
-            )
-        if not self._search_warmed:
-            try:
-                req = urllib.request.Request(
-                    SITE + "/",
-                    headers={"User-Agent": UA, "Accept": "text/html,*/*"},
-                )
-                with self._search_opener.open(req, timeout=10) as resp:
-                    resp.read()
-            except Exception:
-                pass
-            self._search_warmed = True
-        return self._search_opener
-
-    def _search_api(self, key, page):
-        empty = {"searchList": [], "totalCount": 0, "totalPages": 1, "hasMore": False}
+                ext = {}
+        elif isinstance(extend, dict):
+            ext = dict(extend)
+        cat = str(ext.get("cat") or ext.get("分类") or "").strip()
+        if isinstance(filter, dict):
+            f2 = str(filter.get("cat") or filter.get("分类") or "").strip()
+            if f2 and not cat:
+                cat = f2
+        if cat in ("all", "全部", "0", "all_cat"):
+            cat = ""
         try:
-            opener = self._search_opener_get()
-            query = urlencode({"aid": "8662", "query": str(key or ""), "page": str(max(1, int(page or 1)))})
-            req = urllib.request.Request(
-                SITE + "/api/search/result?" + query,
-                headers={
-                    "User-Agent": UA,
-                    "Accept": "application/json, text/plain, */*",
-                    "Referer": SITE + "/",
-                },
-            )
-            with opener.open(req, timeout=20) as resp:
-                if resp.status != 200:
-                    return empty
-                data = json.loads(resp.read().decode("utf-8", "replace"))
-            rows = data.get("searchList") or []
-            if not isinstance(rows, list) or not rows:
-                return empty
-            try:
-                total_pages = int(data.get("totalPages") or 1)
-            except (TypeError, ValueError):
-                total_pages = 1
-            try:
-                total_count = int(data.get("totalCount") or 0)
-            except (TypeError, ValueError):
-                total_count = 0
-            return {
-                "searchList": rows,
-                "totalCount": total_count,
-                "totalPages": max(1, total_pages),
-                "hasMore": bool(data.get("hasMore")),
-            }
+            p = _hg_category_page(route, cat, page)
         except Exception:
-            return empty
-
-    def searchContent(self, key, quick=False, pg="1"):
-        page = _int_page(pg, 1)
-        key = str(key or "").strip() or "短剧"
-        result = self._search_api(key, page)
-        rows = result.get("searchList") or []
-        out = []
-        seen = set()
-        for row in rows:
-            card = _card(row)
-            sid = card.get("vod_id") or ""
-            if not sid or sid in seen:
-                continue
-            seen.add(sid)
-            out.append(card)
-        if not out:
-            try:
-                self._ensure_registered()
-            except Exception:
-                pass
-            if self.device_id and self.install_id:
-                try:
-                    app_cards = _app_search_cards(key, page, {"device_id": self.device_id, "install_id": self.install_id})
-                except Exception:
-                    app_cards = []
-                if app_cards:
-                    out = app_cards
-                    return {
-                        "page": page,
-                        "pagecount": page + 1 if len(app_cards) >= 20 else page,
-                        "limit": len(out),
-                        "total": len(out),
-                        "list": out,
-                    }
-        total = int(result.get("totalCount") or 0) or len(out)
+            p = _hg_category_page("real-drama", cat, page)
+        rows = p.get("recommendList") or []
+        page_data = p.get("pagination") or {}
         return {
             "page": page,
-            "pagecount": max(1, int(result.get("totalPages") or 1)),
+            "pagecount": int(page_data.get("totalPages") or 1),
+            "limit": len(rows),
+            "total": int(page_data.get("total") or len(rows)),
+            "list": [_cat_item(x) for x in rows],
+        }
+
+    def searchContent(self, key, quick=False, pg="1"):
+        try:
+            page = max(1, int(pg))
+        except (TypeError, ValueError):
+            page = 1
+        key = str(key or "").strip() or "短剧"
+        # AI/漫剧相关搜索也走关键词轮换，提升翻页体验
+        low = key.lower()
+        if key in ("AI漫剧", "ai漫剧") or "ai漫" in low:
+            return _search_by_keywords(_AI_MANJU_KEYWORDS, page)
+        if key in ("漫剧", "动漫短剧"):
+            return _search_by_keywords(_MANJU_KEYWORDS, page)
+
+        p = _search_loader(key, page)
+        rows = p.get("searchList") or []
+        if not rows:
+            # 官方搜索风控不可用时，扫官方分类页按标题命中兜底
+            scanned = _hg_search_scan(key, page)
+            if scanned.get("list"):
+                return scanned
+        try:
+            total = int(p.get("totalCount") or 0)
+        except Exception:
+            total = 0
+        try:
+            total_pages = int(p.get("totalPages") or 1)
+        except Exception:
+            total_pages = 1
+        out = []
+        seen = set()
+        for x in rows:
+            it = _item(x)
+            vid = str(it.get("vod_id") or "")
+            if not vid or vid in seen:
+                continue
+            seen.add(vid)
+            out.append(it)
+        if not total:
+            total = len(out)
+        return {
+            "page": page,
+            "pagecount": max(1, min(50, total_pages if total_pages else 1)),
             "limit": len(out),
             "total": total,
             "list": out,
         }
 
-    def _related_block(self, sid, tags, recommendations):
-        items = []
-        if isinstance(recommendations, list) and recommendations:
-            items = recommendations
-        elif isinstance(recommendations, dict) and recommendations:
-            for value in recommendations.values():
-                if isinstance(value, list) and value:
-                    items = value
-                    break
-        if not items and tags:
-            try:
-                result = self._search_api(tags[0], 1)
-                items = result.get("searchList") or []
-            except Exception:
-                items = []
-        lines = []
-        for row in items:
-            card = _card(row)
-            if not card.get("vod_id") or card.get("vod_id") == sid:
-                continue
-            remark = card.get("vod_remarks") or ""
-            lines.append("%s%s" % (card.get("vod_name") or "", ("（%s）" % remark) if remark else ""))
-            if len(lines) >= 8:
-                break
-        if not lines:
-            return ""
-        return "\n\n相关推荐：\n" + "\n".join(lines)
 
     def detailContent(self, ids):
-        sid = _text(_first_item(ids))
-        if sid.startswith("novel#"):
-            try:
-                self._ensure_registered()
-            except Exception:
-                pass
-            try:
-                relay_port = _start_stream_server()
-            except Exception:
-                relay_port = 0
-            try:
-                vod = _novel_detail(sid[6:], {"device_id": self.device_id or "", "install_id": self.install_id or ""}, relay_port, self.device_id or "", self.install_id or "")
-            except Exception:
-                vod = {"vod_id": sid, "vod_name": "", "vod_pic": "", "vod_year": "", "vod_area": "", "vod_director": "", "vod_actor": "", "vod_content": "", "vod_remarks": "", "vod_play_from": "小说", "vod_play_url": ""}
-            return {"list": [vod]}
-        if sid.startswith("audio#"):
-            try:
-                self._ensure_registered()
-            except Exception:
-                pass
-            try:
-                relay_port = _start_stream_server()
-            except Exception:
-                relay_port = 0
-            try:
-                vod = _audio_detail(sid[6:], {"device_id": self.device_id or "", "install_id": self.install_id or ""}, relay_port, self.device_id or "", self.install_id or "")
-            except Exception:
-                vod = {"vod_id": sid, "vod_name": "", "vod_pic": "", "vod_year": "", "vod_area": "", "vod_director": "", "vod_actor": "", "vod_content": "", "vod_remarks": "", "vod_play_from": "听书", "vod_play_url": ""}
-            return {"list": [vod]}
+        sid = str(ids[0] if isinstance(ids, (list, tuple)) else ids)
         sid = sid.replace("hg-series-v1:", "")
-        detail_url = SITE + "/detail?series_id=" + quote(sid, safe="")
-        data = _router(detail_url)
-        page = (data.get("loaderData") or {}).get("detail_page") or {}
-        s = page.get("seriesDetail") or {}
-        vids = [str(v) for v in (s.get("vid_list") or [])]
-        actors = [
-            str(x.get("nickname"))
-            for x in (s.get("celebrities") or [])
-            if isinstance(x, dict) and x.get("nickname")
-        ]
-        tags = [str(t) for t in (s.get("tags") or []) if t]
-        content = str(s.get("series_intro") or "")
-        if not actors:
-            try:
-                self._ensure_registered()
-                author = _multi_detail_author(sid, {"device_id": self.device_id or "", "install_id": self.install_id or ""})
-                if author:
-                    actors = [author]
-            except Exception:
-                pass
-        try:
-            content += self._related_block(sid, tags, page.get("recommendations"))
-        except Exception:
-            pass
-        try:
-            self._ensure_registered()
-            plan_lines = []
-            for card in _plan_related_cards(sid, {"device_id": self.device_id or "", "install_id": self.install_id or ""}):
-                name = card.get("vod_name") or ""
-                remark = card.get("vod_remarks") or ""
-                if not name or name in content:
-                    continue
-                plan_lines.append("%s%s" % (name, ("（%s）" % remark) if remark else ""))
-                if len(plan_lines) >= 8:
-                    break
-            if plan_lines:
-                if "相关推荐" in content:
-                    content += "\n" + "\n".join(plan_lines)
-                else:
-                    content += "\n\n相关推荐：\n" + "\n".join(plan_lines)
-        except Exception:
-            pass
+        p = ((_data(SITE + "/detail?series_id=" + quote(sid, safe="")).get("loaderData") or {}).get("detail_page") or {})
+        s = p.get("seriesDetail") or {}
+        vids = s.get("vid_list") or []
+        actors = [str(x.get("nickname")) for x in (s.get("celebrities") or []) if isinstance(x, dict) and x.get("nickname")]
         play_from = []
         play_url = []
-        relay_port = 0
-        try:
-            relay_port = _start_stream_server()
-        except Exception:
-            relay_port = 0
-        relay_did = self.device_id or ""
-        relay_iid = self.install_id or ""
-        def _relay_ep(v, q, route):
-            if relay_port:
-                query = urlencode({"vid": v, "q": q, "route": route, "did": relay_did, "iid": relay_iid})
-                return "http://127.0.0.1:%d/hg.mp4?%s" % (relay_port, query)
-            if route == "single":
-                return "%svm:%s:%s" % (EPISODE_PREFIX, q, v)
-            if route == "raw":
-                return "%sraw:%s:%s" % (EPISODE_PREFIX, q, v)
-            return "%s%s:%s" % (EPISODE_PREFIX, q, v)
         for q, line_name in _HG_QUALITY_LINES:
             eps = "#".join(
-                "第%d集$%s" % (i + 1, _relay_ep(v, q, "multi"))
+                "第%d集%s%s%s%s" % (i + 1, "$", EPISODE_PREFIX, q + ":", str(v))
                 for i, v in enumerate(vids)
             )
             play_from.append(line_name)
             play_url.append(eps)
-        if vids:
-            rev = "#".join(
-                "第%d集$%s" % (len(vids) - i, _relay_ep(v, "1080", "multi"))
-                for i, v in enumerate(reversed(vids))
-            )
-            play_from.append("倒序")
-            play_url.append(rev)
-            single_eps = "#".join(
-                "第%d集$%s" % (i + 1, _relay_ep(v, "1080", "single"))
-                for i, v in enumerate(vids)
-            )
-            play_from.append("单集线")
-            play_url.append(single_eps)
-            raw_eps = "#".join(
-                "第%d集$%s" % (i + 1, _relay_ep(v, "1080", "raw"))
-                for i, v in enumerate(vids)
-            )
-            play_from.append("裸线")
-            play_url.append(raw_eps)
-        else:
-            play_from = ["网页播放"]
-            play_url = ["网页播放$" + detail_url]
-        return {
-            "list": [
-                {
-                    "vod_id": sid,
-                    "vod_name": str(s.get("series_name") or ""),
-                    "vod_pic": str(s.get("series_cover") or ""),
-                    "vod_year": "",
-                    "vod_area": "",
-                    "vod_director": "",
-                    "vod_actor": ",".join(actors),
-                    "vod_content": content,
-                    "vod_remarks": str(s.get("episode_right_text") or ""),
-                    "vod_play_from": "$$$".join(play_from),
-                    "vod_play_url": "$$$".join(play_url),
-                }
-            ]
-        }
-
-    def _parse_token(self, flag, token):
-        flag_q = ""
-        for name_key, candidate_q in _QUALITY_LINE_NAME_TO_Q.items():
-            if name_key and name_key in str(flag or ""):
-                flag_q = candidate_q
-                break
-        body = str(token or "")
-        if body.startswith(EPISODE_PREFIX):
-            body = body[len(EPISODE_PREFIX):]
-        route = "multi"
-        if body.startswith("vm:"):
-            route = "single"
-            body = body[3:]
-        elif body.startswith("raw:"):
-            route = "raw"
-            body = body[4:]
-        token_q = ""
-        vid = body
-        if ":" in body:
-            head, tail = body.split(":", 1)
-            if head in ("2160", "1440", "1080", "720", "576", "540", "480", "360"):
-                token_q = head
-                vid = tail
-        q = token_q or flag_q or "1080"
-        if q not in ("2160", "1440", "1080", "720", "576", "540", "480", "360"):
-            q = _QUALITY_LINE_NAME_TO_Q.get(q, "1080")
-        return q, vid, route
-
+        return {"list": [{"vod_id": sid, "vod_name": str(s.get("series_name") or ""), "vod_pic": str(s.get("series_cover") or ""), "vod_year": "", "vod_area": "", "vod_director": "", "vod_actor": ",".join(actors), "vod_content": str(s.get("series_intro") or ""), "vod_remarks": str(s.get("episode_right_text") or ""), "vod_play_from": "$$$".join(play_from), "vod_play_url": "$$$".join(play_url)}]}
     def playerContent(self, flag, id, vipFlags=None):
-        raw_id = str(id or "")
-        if raw_id.startswith("novel://hgitem:"):
-            rest = raw_id[len("novel://hgitem:"):]
-            if "?t=" in rest:
-                item_id, title_q = rest.split("?t=", 1)
-                title = unquote(title_q)
-            else:
-                item_id, title = rest, ""
-            try:
-                text = _reader_chapter_text(item_id)
-            except Exception:
-                return {"parse": 1, "jx": 0, "playUrl": "", "url": SITE + "/", "header": {"User-Agent": UA}}
-            safe_title = title.replace("#", "＃").replace("$", "＄")
-            safe_text = text.replace("#", "＃").replace("$", "＄")
-            novel_url = "novel://" + json.dumps({"title": safe_title, "content": safe_text}, ensure_ascii=False)
-            return {"parse": 0, "jx": 0, "playUrl": "", "url": novel_url, "header": {"User-Agent": UA}, "vod_player": "书", "vod_tag": "text"}
-        if "/hg_audio.mp4?" in raw_id:
-            try:
-                _start_stream_server()
-            except Exception:
-                pass
-            return {"parse": 0, "jx": 0, "playUrl": "", "url": raw_id, "header": {"User-Agent": UA}}
-        if raw_id.startswith("http://127.0.0.1") and "/hg.mp4?" in raw_id:
-            try:
-                _start_stream_server()
-            except Exception:
-                pass
-            return {
-                "parse": 0,
-                "jx": 0,
-                "playUrl": "",
-                "url": raw_id,
-                "header": {"User-Agent": UA},
-            }
-        q, vid, route = self._parse_token(flag, id)
-        if str(vid).isdigit():
-            try:
-                self._ensure_registered()
-            except Exception:
-                pass
+        self._adopt_working_pair()
+        # 从线路名（flag，如“红果超清/红果高清”）与集 token 双路解析清晰度。
+        # token 已是 'hg-episode-v1:<q>:<vid>'，flag 用于旧壳只传线路名时兜底。
+        token_q, vid = _split_episode_token(id)
+        line_q = "1080"
+        for name_key, candidate_q in _QUALITY_LINE_NAME_TO_Q.items():
+            if name_key in str(flag or ""):
+                line_q = candidate_q
+                break
+        q = line_q if token_q == "1080" and str(flag) else token_q
+        q = q if q in _QUALITY_LINE_NAME_TO_Q else "1080"
         if not str(vid).isdigit():
-            fallback = id if str(id or "").startswith("http") else SITE + "/"
             return {
                 "parse": 1,
                 "jx": 0,
                 "playUrl": "",
-                "url": fallback,
+                "url": SITE + "/",
                 "header": {"User-Agent": UA},
             }
-
+        # 取流优先级：本机 Range 流服务 > 壳代理。
+        # 壳代理（fongmi / OK影视 的 /proxy?do=py）实测会忽略 Range：对 bytes=0-1023
+        # 也回 200 + 整片 + chunked，既无 Content-Range 也无 Accept-Ranges，且必须
+        # 等整片下载 + CENC 解密完成后才吐首字节（单集 12~17MB，实测 8.7s / 16.3s，
+        # 超过播放器默认 8s 读超时）。首集常因缓存或重试侥幸起播，切到第二集时播放器
+        # 按新 URL 重新请求即超时失败，表现为“第 1 集能放、第 2 集不能放”。
+        # 本机流服务支持 206 / Content-Range / Accept-Ranges，首字节约 1s，切集稳定。
+        # 会话构建（取 video_model + 拉 moov）在冷启动时约 3~18s，若等到播放器连上来
+        # 才建会话，响应头会被拖延到读超时。这里先异步预热会话，让播放器连接时命中缓存。
         def _warm_session():
             try:
-                _stream_session(
-                    vid,
-                    {"device_id": self.device_id or "", "install_id": self.install_id or ""},
-                    q,
-                    route,
-                )
-            except Exception as exc:
-                if _hg_limited_error(exc):
-                    self._device_limited = True
-
+                _stream_session(vid, dict(self._device_conf), q)
+            except Exception:
+                pass
         try:
             threading.Thread(target=_warm_session, daemon=True).start()
         except Exception:
@@ -5536,7 +4602,12 @@ class Spider(BaseSpider):
             port = 0
         if port:
             query = urlencode(
-                {"vid": vid, "q": q, "route": route, "did": self.device_id or "", "iid": self.install_id or ""}
+                {
+                    "vid": vid,
+                    "q": q,
+                    "did": self.device_id or "",
+                    "iid": self.install_id or "",
+                }
             )
             return {
                 "parse": 0,
@@ -5545,6 +4616,7 @@ class Spider(BaseSpider):
                 "url": "http://127.0.0.1:%d/hg.mp4?%s" % (port, query),
                 "header": {"User-Agent": UA},
             }
+        # 回退：壳代理（保留壳自带的 do=py，不要覆盖 do）
         proxy = ""
         try:
             if hasattr(self, "getProxyUrl"):
@@ -5554,14 +4626,23 @@ class Spider(BaseSpider):
         if proxy:
             sep = "&" if "?" in proxy else "?"
             url = proxy + sep + urlencode(
-                {"vid": vid, "q": q, "route": route, "hg": "cenc", "did": self.device_id or "", "iid": self.install_id or ""}
+                {
+                    "vid": vid,
+                    "q": q,
+                    "hg": "cenc",
+                    "did": self.device_id or "",
+                    "iid": self.install_id or "",
+                }
             )
             return {
                 "parse": 0,
                 "jx": 0,
                 "playUrl": "",
                 "url": url,
-                "header": {"User-Agent": MEDIA_UA, "Referer": "https://novel.snssdk.com/"},
+                "header": {
+                    "User-Agent": MEDIA_UA,
+                    "Referer": "https://novel.snssdk.com/",
+                },
             }
         return {
             "parse": 1,
@@ -5571,73 +4652,146 @@ class Spider(BaseSpider):
             "header": {"User-Agent": UA},
         }
 
+
     def proxy(self, param):
+        """部分壳调用 proxy 而不是 localProxy。"""
         return self.localProxy(param)
 
     def localProxy(self, param):
+        """壳本地代理：优先读缓存；无原生 AES 时避免一上来就解 1080 整集导致超时失败。"""
+        import traceback
         param = param or {}
-        vid = str(param.get("vid") or param.get("id") or param.get("mediaId") or "").strip()
-        url_param = str(param.get("url") or "")
-        url_query = {}
-        if url_param:
-            try:
-                url_query = parse_qs(urlparse(url_param).query)
-            except Exception:
-                url_query = {}
-        if not vid and url_query:
-            vid = (url_query.get("vid") or url_query.get("id") or [""])[0]
+        self._adopt_working_pair()
+        vid = str(
+            param.get("vid")
+            or param.get("id")
+            or param.get("mediaId")
+            or ""
+        ).strip()
         if not vid or not str(vid).isdigit():
-            for value in param.values():
+            for _key, value in param.items():
                 text = str(value or "").strip()
                 if text.isdigit() and len(text) >= 10:
                     vid = text
                     break
-        if not vid or not str(vid).isdigit():
+        if not vid:
             return [400, "text/plain; charset=utf-8", b"missing vid"]
-        cfg = {
-            "device_id": str(param.get("did") or (url_query.get("did") or [""])[0] or self.device_id or ""),
-            "install_id": str(param.get("iid") or (url_query.get("iid") or [""])[0] or self.install_id or ""),
-        }
-        user_route = str(param.get("route") or (url_query.get("route") or [""])[0] or "multi").strip()
-        if user_route not in ("multi", "single", "raw"):
-            user_route = "multi"
-        user_q = str(param.get("q") or param.get("quality") or (url_query.get("q") or [""])[0] or "").strip()
-        if user_q in _QUALITY_LINE_NAME_TO_Q:
-            user_q = _QUALITY_LINE_NAME_TO_Q[user_q]
-        if user_q != "auto" and user_q not in ("2160", "1440", "1080", "720", "576", "540", "480", "360"):
-            user_q = "1080"
+
         try:
-            session = _stream_session(vid, cfg, user_q, user_route)
+            cfg = dict(self._device_conf)
+            if param.get("did"):
+                cfg["device_id"] = str(param.get("did"))
+            if param.get("iid"):
+                cfg["install_id"] = str(param.get("iid"))
+            user_q = str(param.get("q") or param.get("quality") or "").strip()
+            # 有原生 AES：优先 1080；纯 Python AES 很慢：先 720 保证能播，再尝试更高
+            if user_q:
+                order = [user_q, "1080", "720", "480", "360"]
+            elif _aes_is_fast():
+                order = ["1080", "720", "480", "360"]
+            else:
+                order = ["720", "480", "1080", "360"]
+            # dedupe
+            seen_q = set()
+            quals = []
+            for q in order:
+                if q and q not in seen_q:
+                    seen_q.add(q)
+                    quals.append(q)
+
+            # 缓存命中直接返回。用户指定线路清晰度(user_q)时，只认该清晰度缓存，
+            # 不能回退命中其它清晰度缓存（否则请求480会拿到360内容）。
+            if user_q:
+                primary = [user_q]
+            else:
+                primary = quals
+            for q in primary:
+                cached = _hg_cache_get(vid, q)
+                if cached:
+                    return [200, "video/mp4", cached]
+
+            model = None
+            rows = None
+            for _round in range(4):
+                try:
+                    model = _video_model(vid, cfg)
+                except Exception as err:
+                    if not _is_empty_model_error(err) or _round >= 3:
+                        raise
+                    pair = _rotate_stream_device()
+                    cfg = dict(pair)
+                    self._device_conf = dict(pair)
+                    self.device_id = pair["device_id"]
+                    self.install_id = pair["install_id"]
+                    continue
+                rows = _video_list_from_model(model)
+                if rows:
+                    break
+                if _round >= 3:
+                    break
+                pair = _rotate_stream_device()
+                cfg = {"device_id": pair["device_id"], "install_id": pair["install_id"]}
+                self.device_id = pair["device_id"]
+                self.install_id = pair["install_id"]
+            if not rows:
+                return [500, "text/plain; charset=utf-8", b"empty video list"]
+
+            last_err = None
+            for wanted in quals:
+                try:
+                    # 再查一次该清晰度缓存（model 解析后）
+                    cached = _hg_cache_get(vid, wanted)
+                    if cached:
+                        return [200, "video/mp4", cached]
+
+                    _, item = _select_quality(rows, wanted)
+                    url = _media_url(item)
+                    spade = _spade_value(item)
+                    if not url or not spade:
+                        last_err = "missing url/spade q=%s" % wanted
+                        continue
+
+                    # 下载超时：纯 AES 环境更短，避免壳端空等后失败
+                    dl_timeout = 150 if _aes_is_fast() else 90
+                    media_headers = {
+                        "User-Agent": MEDIA_UA,
+                        "Referer": "https://novel.snssdk.com/",
+                    }
+                    try:
+                        body = _multi_download(
+                            url,
+                            headers=media_headers,
+                            timeout=dl_timeout,
+                            workers=4 if _aes_is_fast() else 3,
+                        )
+                    except Exception as dl_err:
+                        last_err = "download failed q=%s err=%s" % (wanted, dl_err)
+                        continue
+                    if not body:
+                        last_err = "empty body q=%s" % wanted
+                        continue
+
+                    # 纯 AES 且体积过大时跳过超大 1080，减少必超时
+                    if (not _aes_is_fast()) and wanted in ("1080", "4k") and len(body) > 45 * 1024 * 1024:
+                        last_err = "skip large %s without native AES size=%s" % (wanted, len(body))
+                        continue
+
+                    plain = decrypt_mp4_cenc(body, derive_content_key(spade))
+                    if len(plain) < 64 or (b"ftyp" not in plain[:64] and b"moov" not in plain[:4096]):
+                        last_err = "bad mp4 after decrypt q=%s" % wanted
+                        continue
+                    try:
+                        _hg_cache_put(vid, wanted, plain)
+                    except Exception:
+                        pass
+                    return [200, "video/mp4", plain]
+                except Exception as one_err:
+                    last_err = "%s q=%s" % (one_err, wanted)
+                    continue
+
+            msg = "hg localProxy failed: %s" % last_err
+            return [500, "text/plain; charset=utf-8", msg.encode("utf-8")]
         except Exception as exc:
-            renewed = False
-            if _hg_limited_error(exc) and cfg.get("device_id") == self.device_id and cfg.get("install_id") == self.install_id:
-                self._device_limited = True
-                renewed = self._renew_device()
-            if not renewed:
-                return [500, "text/plain; charset=utf-8", ("hg localProxy failed: %s" % exc).encode("utf-8")]
-            cfg = {"device_id": self.device_id, "install_id": self.install_id}
-            try:
-                session = _stream_session(vid, cfg, user_q)
-            except Exception as exc2:
-                if _hg_limited_error(exc2):
-                    self._device_limited = True
-                return [500, "text/plain; charset=utf-8", ("hg localProxy failed: %s" % exc2).encode("utf-8")]
-        raw_range = str(
-            param.get("Range") or param.get("range") or ""
-        )
-        if not raw_range and isinstance(param.get("headers"), dict):
-            raw_range = str(param["headers"].get("Range") or param["headers"].get("range") or "")
-        requested = _parse_range(raw_range, session.total) if raw_range else None
-        if requested is _RANGE_UNSATISFIABLE:
-            return [416, "text/plain; charset=utf-8", b""]
-        if requested:
-            start, end = requested
-            code = 206
-        else:
-            start, end = 0, session.total - 1
-            code = 200
-        try:
-            data = session.read_range(start, end)
-        except Exception as exc:
-            return [500, "text/plain; charset=utf-8", ("hg localProxy failed: %s" % exc).encode("utf-8")]
-        return [code, "video/mp4", data]
+            msg = "hg localProxy failed: %s\n%s" % (exc, traceback.format_exc())
+            return [500, "text/plain; charset=utf-8", msg.encode("utf-8")]
+
